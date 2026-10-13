@@ -1359,6 +1359,8 @@ export async function validateRebuiltDexIntegrity(
     duplicateClasses.length === 0 &&
     assemblerErrors.length === 0 &&
     !isDexMalformed &&
+    rebuiltDex.validation.valid &&
+    rebuiltDex.verificationReport?.isStructurallyValid === true &&
     intendedPatchPresent;
 
   let failureReason: string | undefined;

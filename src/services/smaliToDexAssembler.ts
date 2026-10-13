@@ -507,14 +507,92 @@ export async function assembleSmaliZipToDex(
   zipFileName: string = 'classes.smali.zip',
   selectedRootPrefix?: string
 ): Promise<SmaliToDexResult> {
-  // Still scan the input to provide useful archive/structure errors, but never convert
-  // it with the disabled placeholder encoder.
-  await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
-  throw new Error(
-    `Cannot convert "${zipFileName}" to DEX: official Smali assembler backend is not configured. No DEX file was generated.`
-  );
-}
+  const startTime = Date.now();
+  const extracted = await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
+  const root = extracted.selectedRoot;
+  const query = root ? \`?root=\${encodeURIComponent(root)}\` : '';
+  const response = await fetch(\`/api/assemble-smali-zip\${query}\`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/zip' },
+    body: zipBuffer,
+  });
 
+  if (!response.ok) {
+    let message = \`Smali assembler backend failed with HTTP \${response.status}.\`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === 'string') message = body.error;
+    } catch {
+      // Keep the HTTP status diagnostic for non-JSON server errors.
+    }
+    throw new Error(message);
+  }
+
+  if (response.headers.get('X-Smali-Verified') !== 'true') {
+    throw new Error('The server did not confirm real Smali assembly and Baksmali round-trip validation.');
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const verificationReport = await verifyDexBinary(bytes);
+  if (!verificationReport.isStructurallyValid) {
+    throw new Error(\`Server returned a DEX that failed client-side structural checks: \${verificationReport.details.join('; ')}\`);
+  }
+
+  const reportedClassCount = Number(response.headers.get('X-Dex-Class-Count'));
+  if (!Number.isFinite(reportedClassCount) || reportedClassCount !== extracted.classes.length) {
+    throw new Error(
+      \`DEX class count mismatch for "\${zipFileName}": input contains \${extracted.classes.length} parsed classes, backend reports \${response.headers.get('X-Dex-Class-Count') || 'unknown'}.\`
+    );
+  }
+
+  const sha256 = response.headers.get('X-Dex-SHA256');
+  const sha1 = response.headers.get('X-Dex-SHA1');
+  const adler32 = response.headers.get('X-Dex-Adler32');
+  if (!sha256 || !sha1 || !adler32) {
+    throw new Error('Assembler response is missing integrity headers. Output rejected.');
+  }
+
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const blob = new Blob([bytes as BlobPart], { type: 'application/vnd.android.dex' });
+  const methodCount = extracted.classes.reduce((total, cls) => total + cls.methods.length, 0);
+  const fieldCount = extracted.classes.reduce((total, cls) => total + cls.fields.length, 0);
+
+  return {
+    blob,
+    uint8: bytes,
+    size: bytes.byteLength,
+    sha256,
+    sha1,
+    adler32: \`0x\${adler32.toUpperCase()}\`,
+    classCount: reportedClassCount,
+    methodCount,
+    fieldCount,
+    stringCount: view.getUint32(0x38, true),
+    classes: extracted.classes,
+    extractedSmaliFiles: extracted.smaliFiles,
+    selectedRoot: root || undefined,
+    verificationReport,
+    processingTimeMs: Date.now() - startTime,
+    validation: {
+      valid: true,
+      errors: [],
+      warnings: ['Static Smali assembly and DEX round-trip validation passed. Application runtime behavior has not been tested.'],
+      registerStatus: \`Parsed \${methodCount} defined methods across \${reportedClassCount} classes.\`,
+      branchTargetStatus: 'Official Smali assembler succeeded and Baksmali round-trip class-set validation passed.',
+      exceptionRangeStatus: 'DEX header, SHA-1, Adler-32, and class-set checks passed.',
+      integrityChecksum: sha256,
+      validationLevel: 'Static Bytecode Verified',
+    },
+    buildLog: [
+      ...extracted.logs,
+      \`Official Smali assembler completed for \${zipFileName}.\`,
+      \`Baksmali round-trip verified \${reportedClassCount} classes.\`,
+      \`SHA-256: \${sha256}\`,
+      \`SHA-1: \${sha1}\`,
+      \`Adler-32: 0x\${adler32.toUpperCase()}\`,
+    ],
+  };
+}
 /**
  * Decodes Dalvik access flags into standard Smali directives
  */

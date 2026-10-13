@@ -1531,7 +1531,7 @@ export async function regenerateDexFromCompleteSmaliDump(
   const seen = new Set<string>();
   for (const cls of originalClasses) {
     if (!cls.name || seen.has(cls.name)) {
-      throw new Error(\`Cannot patch Smali: missing or duplicate class descriptor "\${cls.name || '(empty)'}".\`);
+      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "\${cls.name || '(empty)'}".`);
     }
     seen.add(cls.name);
   }
@@ -1545,11 +1545,11 @@ export async function regenerateDexFromCompleteSmaliDump(
     let updatedRawCode = cls.rawCode;
     for (const patch of matching) {
       if (!patch.originalSmali || !patch.patchedSmali) {
-        throw new Error(\`Patch for \${cls.name}->\${patch.methodName} is missing its exact original or replacement method body.\`);
+        throw new Error(`Patch for \${cls.name}->\${patch.methodName} is missing its exact original or replacement method body.`);
       }
       const first = updatedRawCode.indexOf(patch.originalSmali);
       if (first < 0 || updatedRawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
-        throw new Error(\`Patch rejected: original method block was not found uniquely in \${cls.filePath}. No DEX was generated.\`);
+        throw new Error(`Patch rejected: original method block was not found uniquely in \${cls.filePath}. No DEX was generated.`);
       }
       updatedRawCode = updatedRawCode.slice(0, first) +
         patch.patchedSmali + updatedRawCode.slice(first + patch.originalSmali.length);
@@ -1558,11 +1558,11 @@ export async function regenerateDexFromCompleteSmaliDump(
     const reparsed = parseSmali(updatedRawCode, cls.filePath);
     const parsedTarget = reparsed.find((parsed) => parsed.name === cls.name);
     if (!parsedTarget) {
-      throw new Error(\`Patched source no longer parses as \${cls.name}; no DEX was generated.\`);
+      throw new Error(`Patched source no longer parses as \${cls.name}; no DEX was generated.`);
     }
     const validation = validateSmali(parsedTarget.rawCode);
     if (!validation.valid) {
-      throw new Error(\`Patched Smali failed validation in \${cls.filePath}: \${validation.errors.slice(0, 5).join('; ')}\`);
+      throw new Error(`Patched Smali failed validation in \${cls.filePath}: \${validation.errors.slice(0, 5).join('; ')}`);
     }
     return parsedTarget;
   });
@@ -1572,9 +1572,9 @@ export async function regenerateDexFromCompleteSmaliDump(
   for (const cls of rebuiltClasses) {
     const filePath = cls.filePath.replace(/\\/g, '/').replace(/^\/+/, '');
     if (!filePath.endsWith('.smali') || filePath.split('/').some((part) => part === '..' || part === '.')) {
-      throw new Error(\`Refusing unsafe Smali path "\${cls.filePath}".\`);
+      throw new Error(`Refusing unsafe Smali path "\${cls.filePath}".`);
     }
-    if (pathSet.has(filePath)) throw new Error(\`Duplicate Smali output path "\${filePath}".\`);
+    if (pathSet.has(filePath)) throw new Error(`Duplicate Smali output path "\${filePath}".`);
     pathSet.add(filePath);
     zip.file(filePath, cls.rawCode.split(/\r?\n/).filter((line) => line.trim() !== '.end class').join('\n'));
   }

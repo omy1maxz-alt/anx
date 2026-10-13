@@ -1427,6 +1427,13 @@ export async function validateRebuiltDexIntegrity(
  * "Use the original DEX as the source of truth. If the new DEX is missing original classes,
  * regenerate it from the complete original Smali dump, apply the patch, and assemble it again."
  */
+/**
+ * Applies approved edits to a complete parsed Smali workspace.
+ *
+ * This function now only prepares and validates the Smali source. It does not call
+ * a handwritten DEX encoder. Binary output stays disabled until a real assembler
+ * backend is integrated and independently verifies the resulting DEX.
+ */
 export async function regenerateDexFromCompleteSmaliDump(
   originalClasses: SmaliClass[],
   appliedPatches: AppliedPatchRecord[],
@@ -1437,49 +1444,53 @@ export async function regenerateDexFromCompleteSmaliDump(
   rebuiltClasses: SmaliClass[];
 }> {
   if (originalClasses.length === 0) {
-    throw new Error('Cannot regenerate DEX: originalClasses dump is empty (0 classes). Source of truth must not be empty.');
+    throw new Error('Cannot regenerate DEX: the complete original Smali dump is empty.');
   }
 
-  // Clone all original classes to ensure zero class loss
+  const seen = new Set<string>();
+  for (const cls of originalClasses) {
+    if (!cls.name || seen.has(cls.name)) {
+      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "${cls.name || '(empty)'}".`);
+    }
+    seen.add(cls.name);
+  }
+
   const patchedClasses: SmaliClass[] = originalClasses.map((cls) => {
-    const matchingPatch = appliedPatches.find(
+    const matching = appliedPatches.filter(
       (p) => p.className === cls.name || p.filePath === cls.filePath
     );
-    if (!matchingPatch) {
-      return { ...cls }; // 100% preserved unmodified class
+    if (matching.length === 0) return { ...cls };
+    if (matching.length > 1) {
+      throw new Error(`Multiple patch records target ${cls.name}; review the patch list before applying.`);
     }
 
-    // Apply surgical patch to this class
-    let updatedRawCode = cls.rawCode;
-    if (matchingPatch.originalSmali && matchingPatch.patchedSmali) {
-      updatedRawCode = updatedRawCode.replace(matchingPatch.originalSmali, matchingPatch.patchedSmali);
+    const patch = matching[0];
+    if (!patch.originalSmali || !patch.patchedSmali) {
+      throw new Error(`Patch for ${cls.name}->${patch.methodName} is missing the exact original or replacement method body.`);
+    }
+    const first = cls.rawCode.indexOf(patch.originalSmali);
+    if (first < 0 || cls.rawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
+      throw new Error(`Patch rejected: exact original method block was not found uniquely in ${cls.filePath}. Source left unchanged.`);
     }
 
-    const reParsed = parseSmali(updatedRawCode, cls.filePath);
-    if (reParsed.length > 0) {
-      return reParsed[0];
+    const updatedRawCode = cls.rawCode.slice(0, first) +
+      patch.patchedSmali + cls.rawCode.slice(first + patch.originalSmali.length);
+    const reparsed = parseSmali(updatedRawCode, cls.filePath);
+    const parsedTarget = reparsed.find((parsed) => parsed.name === cls.name);
+    if (!parsedTarget) {
+      throw new Error(`Patched Smali failed to parse as class ${cls.name}; no binary output created.`);
     }
-    return {
-      ...cls,
-      rawCode: updatedRawCode,
-    };
+    const validation = validateSmali(parsedTarget.rawCode);
+    if (!validation.valid) {
+      throw new Error(`Patched Smali failed static validation in ${cls.filePath}: ${validation.errors.slice(0, 5).join('; ')}`);
+    }
+    return parsedTarget;
   });
 
-  // Assemble the COMPLETE class set
-  const dexResult = await assembleClassesToDex(patchedClasses, outputDexFileName);
-
-  // Validate integrity against original classes
-  const integrityValidation = await validateRebuiltDexIntegrity(
-    originalClasses,
-    dexResult,
-    appliedPatches.map((p) => ({ className: p.className, methodName: p.methodName }))
+  // Do not fall back to a hand-built DEX-shaped buffer.
+  throw new Error(
+    `Smali patch prepared for ${patchedClasses.length} classes, but ${outputDexFileName} was NOT generated. Configure the official smali assembler backend and independent DEX verifier before binary export.`
   );
-
-  return {
-    dexResult,
-    integrityValidation,
-    rebuiltClasses: patchedClasses,
-  };
 }
 
 /**

@@ -1,0 +1,8 @@
+{
+  "name": "Remix DroidForensics - APK \u0026 Mod Behavior Lab",
+  "description": "Evidence-driven Android APK, DEX, Smali, and Manifest reverse-engineering forensics workbench for analyzing forced updates, popups, and redirects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

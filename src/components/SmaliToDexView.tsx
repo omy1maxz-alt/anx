@@ -390,9 +390,8 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
   };
 
   const handleDownloadDex = async () => {
-    if (!assemblyResult) return;
-    const filename = outputFileName || 'classes10.dex';
-    await downloadBlob(assemblyResult.blob, filename);
+    setErrorMessage('No verified DEX is available. This build disables DEX downloads until official Smali assembly and independent verification are integrated.');
+    return;
   };
 
   const handleAddToArtifacts = () => {

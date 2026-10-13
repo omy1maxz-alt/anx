@@ -401,11 +401,11 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
         setAssembleProgressStep('Extracting Smali files and validating directory hierarchy...');
         await new Promise((r) => setTimeout(r, 60));
 
-        setAssembleProgressStep('Parsing Dalvik bytecode, instructions, and register bounds...');
-        await new Promise((r) => setTimeout(r, 60));
-
-        setAssembleProgressStep('Constructing Dalvik 035 symbol tables and string pool...');
-        result = await assembleSmaliZipToDex(zipBuffer, uploadedZipFile.name, selectedRootPrefix);
+        // assembleSmaliZipToDex previously called a handwritten placeholder encoder.
+        // It is disabled until official smali assembly and independent validation exist.
+        throw new Error(
+          'DEX assembly is currently disabled to prevent corrupt output. The ZIP was not converted. Use the Clean Smali ZIP export; DEX download will return after the official assembler backend is integrated.'
+        );
       } else {
         // Workspace mode
         if (currentClasses.length === 0) {

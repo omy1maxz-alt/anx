@@ -376,62 +376,22 @@ export async function buildCleanSmaliZip(
 /**
  * Builds a patched DEX file representation
  */
+/**
+ * Placeholder DEX construction is intentionally disabled.
+ *
+ * A valid DEX cannot be created by copying source text into a DEX-shaped buffer.
+ * Real assembly must be performed by the official smali assembler, then parsed and
+ * validated. Failing closed prevents a plausible-looking but non-runnable artifact
+ * from being downloaded or packaged into an APK.
+ */
 export async function buildPatchedDex(
-  classes: SmaliClass[],
-  originalDexBuffer?: ArrayBuffer
+  _classes: SmaliClass[],
+  _originalDexBuffer?: ArrayBuffer
 ): Promise<{ blob: Blob; size: number; sha256: string; validation: ValidationResult }> {
-  let dexBytes: Uint8Array;
-
-  if (originalDexBuffer) {
-    dexBytes = new Uint8Array(originalDexBuffer.slice(0));
-  } else {
-    // Generate valid DEX 035 header
-    dexBytes = new Uint8Array(2048);
-    // Magic 'dex\n035\0'
-    dexBytes[0] = 0x64;
-    dexBytes[1] = 0x65;
-    dexBytes[2] = 0x78;
-    dexBytes[3] = 0x0a;
-    dexBytes[4] = 0x30;
-    dexBytes[5] = 0x33;
-    dexBytes[6] = 0x35;
-    dexBytes[7] = 0x00;
-
-    // Header size (0x70 = 112 bytes)
-    dexBytes[0x24] = 0x70;
-    // Endian tag (0x12345678)
-    dexBytes[0x28] = 0x78;
-    dexBytes[0x29] = 0x56;
-    dexBytes[0x2a] = 0x34;
-    dexBytes[0x2b] = 0x12;
-  }
-
-  // Embed patched class references
-  const classSummary = classes.map((c) => c.name).join('\n');
-  const encoder = new TextEncoder();
-  const summaryBytes = encoder.encode(`// DroidForensics Patched Bytecode Definition\n${classSummary}\n`);
-  const offset = Math.min(256, dexBytes.length - summaryBytes.length - 1);
-  if (offset > 0) {
-    dexBytes.set(summaryBytes, offset);
-  }
-
-  const sha256 = await computeSha256(dexBytes);
-  const blob = new Blob([dexBytes as BlobPart], { type: 'application/octet-stream' });
-
-  return {
-    blob,
-    size: dexBytes.byteLength,
-    sha256,
-    validation: {
-      valid: true,
-      errors: [],
-      warnings: [],
-      registerStatus: 'DEX class offsets aligned',
-      branchTargetStatus: 'Method bytecode stubs verified',
-      exceptionRangeStatus: 'Header checksum validated',
-      validationLevel: 'Static Bytecode Verified',
-    },
-  };
+  throw new Error(
+    'Real DEX assembly is unavailable in this client-only pipeline. No DEX was generated. ' +
+    'Use the official smali assembler in a backend/worker, and verify the output with a DEX parser before downloading it.'
+  );
 }
 
 /**

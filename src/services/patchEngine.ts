@@ -274,20 +274,51 @@ export function applyPatchToClass(
     ? targetMethodNameOrSignature.split('(')[0].replace(/^.*->/, '')
     : targetMethodNameOrSignature;
 
+  // Match the complete method declaration rather than the method name alone.
+  const normalizedTarget = targetMethodNameOrSignature.includes('->')
+    ? targetMethodNameOrSignature.slice(targetMethodNameOrSignature.indexOf('->') + 2)
+    : targetMethodNameOrSignature;
+  const descriptorTarget = normalizedTarget.includes('(') ? normalizedTarget : null;
+
   let startIdx = -1;
   let endIdx = -1;
+  let duplicateMatches = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (trimmed.startsWith('.method ') && (trimmed.includes(targetMethodNameOrSignature) || trimmed.includes(` ${cleanTarget}(`))) {
-      startIdx = i;
-      break;
+    if (!trimmed.startsWith('.method ')) continue;
+
+    const declaration = trimmed.replace(/^\.method\s+/, '');
+    const nameAndDescriptor = declaration.match(/([\w$<>-]+\([^)]*\)[^\s]+)\s*$/)?.[1];
+    const matches = descriptorTarget
+      ? nameAndDescriptor === descriptorTarget
+      : trimmed.includes(` ${cleanTarget}(`);
+
+    if (matches) {
+      duplicateMatches++;
+      if (startIdx === -1) startIdx = i;
     }
   }
 
+  if (descriptorTarget && duplicateMatches !== 1) {
+    throw new Error(
+      duplicateMatches === 0
+        ? `Patch rejected: exact method "${descriptorTarget}" was not found. No method was added or changed.`
+        : `Patch rejected: exact method "${descriptorTarget}" appears ${duplicateMatches} times. Resolve duplicate method definitions before patching.`
+    );
+  }
+
+  // If matching by name only, ambiguous overloads must also fail closed.
+  if (!descriptorTarget && duplicateMatches > 1) {
+    throw new Error(
+      `Patch rejected: method name "${cleanTarget}" is overloaded or duplicated (${duplicateMatches} matches). Supply the full signature.`
+    );
+  }
+
   if (startIdx !== -1) {
-    for (let j = startIdx; j < lines.length; j++) {
-      if (lines[j].trim().startsWith('.end method')) {
+    for (let j = startIdx + 1; j < lines.length; j++) {
+      if (lines[j].trim().startsWith('.method ')) break;
+      if (lines[j].trim() === '.end method') {
         endIdx = j;
         break;
       }
@@ -295,23 +326,23 @@ export function applyPatchToClass(
   }
 
   if (startIdx === -1 || endIdx === -1) {
-    // If not found, append patched method before .end class or at end
-    const lastClassEnd = lines.findIndex((l) => l.trim().startsWith('.end class'));
-    if (lastClassEnd !== -1) {
-      lines.splice(lastClassEnd, 0, '\n' + patchedMethodBlock.trim() + '\n');
-    } else {
-      lines.push('\n' + patchedMethodBlock.trim());
-    }
-    return {
-      newRawCode: lines.join('\n'),
-      success: true,
-      replacedLines: patchedMethodBlock.split('\n').length,
-    };
+    throw new Error('Patch rejected: target method block is missing or malformed. Adding a new method automatically is disabled.');
+  }
+
+  // Ensure the replacement itself is a single valid method block before editing.
+  const patchedLines = patchedMethodBlock.trim().split(/\r?\n/);
+  if (!patchedLines[0]?.trim().startsWith('.method ') || patchedLines[patchedLines.length - 1]?.trim() !== '.end method') {
+    throw new Error('Patch rejected: replacement must contain exactly one complete .method ... .end method block.');
+  }
+  const bodyText = patchedLines.join('\n');
+  const startCount = (bodyText.match(/^\.method\s/gm) || []).length;
+  const endCount = (bodyText.match(/^\.end method\s*$/gm) || []).length;
+  if (startCount !== 1 || endCount !== 1 || bodyText.includes('.end class')) {
+    throw new Error('Patch rejected: malformed replacement block or unsupported .end class directive.');
   }
 
   const replacedLines = endIdx - startIdx + 1;
-  const newMethodLines = patchedMethodBlock.trim().split(/\r?\n/);
-  lines.splice(startIdx, replacedLines, ...newMethodLines);
+  lines.splice(startIdx, replacedLines, ...patchedLines);
 
   return {
     newRawCode: lines.join('\n'),

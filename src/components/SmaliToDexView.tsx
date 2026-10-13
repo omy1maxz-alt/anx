@@ -49,6 +49,8 @@ import {
   scanSmaliArchive,
   createSmaliConverterTestSuite,
   disassembleDexToSmaliClasses,
+  extractSmaliFromZip,
+  verifyDexBinary,
   validateRebuiltDexIntegrity,
   regenerateDexFromCompleteSmaliDump,
   createDex10CrashTestFixtures,
@@ -58,6 +60,55 @@ import {
   SmaliTestSuiteItem,
 } from '../services/smaliToDexAssembler';
 import { downloadBlob } from '../services/fileDownloader';
+
+async function disassembleDexWithBackend(
+  dexBuffer: ArrayBuffer,
+  sourceName: string
+): Promise<DisassembledDexResult> {
+  const response = await fetch(`/api/disassemble-dex?filename=${encodeURIComponent(sourceName)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/vnd.android.dex' },
+    body: dexBuffer,
+  });
+  if (!response.ok) {
+    let message = `Baksmali backend failed with HTTP ${response.status}.`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === 'string') message = body.error;
+    } catch { /* Keep the HTTP diagnostic if the response was not JSON. */ }
+    throw new Error(message);
+  }
+  if (response.headers.get('X-Smali-Verified') !== 'true') {
+    throw new Error('The server did not confirm official Baksmali disassembly. Result rejected.');
+  }
+
+  const zipBlob = await response.blob();
+  const zipBuffer = await zipBlob.arrayBuffer();
+  const parsed = await extractSmaliFromZip(zipBuffer);
+  const descriptors = parsed.classes.map((cls) => cls.name);
+  const version = dexBuffer.byteLength >= 8
+    ? new TextDecoder().decode(new Uint8Array(dexBuffer, 4, 3))
+    : 'unknown';
+
+  return {
+    classes: parsed.classes,
+    classDescriptors: descriptors,
+    dexMetadata: {
+      fileName: sourceName,
+      version: `DEX ${version}`,
+      fileSize: dexBuffer.byteLength,
+      classCount: Number(response.headers.get('X-Dex-Class-Count')) || descriptors.length,
+      stringCount: dexBuffer.byteLength >= 60
+        ? new DataView(dexBuffer).getUint32(0x38, true)
+        : 0,
+      classes: descriptors,
+    },
+    smaliZipBlob: zipBlob,
+    smaliZipBuffer: zipBuffer,
+    smaliFiles: parsed.classes.map((cls) => ({ path: cls.filePath, content: cls.rawCode })),
+    logs: [...parsed.logs, 'Official Baksmali backend confirmed successful DEX disassembly.'],
+  };
+}
 
 interface SmaliToDexViewProps {
   currentClasses: SmaliClass[];

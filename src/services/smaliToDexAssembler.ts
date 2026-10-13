@@ -1511,6 +1511,10 @@ export async function validateRebuiltDexIntegrity(
  * a handwritten DEX encoder. Binary output stays disabled until a real assembler
  * backend is integrated and independently verifies the resulting DEX.
  */
+/**
+ * Applies approved edits to a complete Smali dump, then invokes the official assembler
+ * through the server API. The browser-side placeholder DEX encoder is never used.
+ */
 export async function regenerateDexFromCompleteSmaliDump(
   originalClasses: SmaliClass[],
   appliedPatches: AppliedPatchRecord[],
@@ -1527,49 +1531,68 @@ export async function regenerateDexFromCompleteSmaliDump(
   const seen = new Set<string>();
   for (const cls of originalClasses) {
     if (!cls.name || seen.has(cls.name)) {
-      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "${cls.name || '(empty)'}".`);
+      throw new Error(\`Cannot patch Smali: missing or duplicate class descriptor "\${cls.name || '(empty)'}".\`);
     }
     seen.add(cls.name);
   }
 
-  const patchedClasses: SmaliClass[] = originalClasses.map((cls) => {
+  const rebuiltClasses: SmaliClass[] = originalClasses.map((cls) => {
     const matching = appliedPatches.filter(
-      (p) => p.className === cls.name || p.filePath === cls.filePath
+      (patch) => patch.className === cls.name || patch.filePath === cls.filePath
     );
     if (matching.length === 0) return { ...cls };
-    if (matching.length > 1) {
-      throw new Error(`Multiple patch records target ${cls.name}; review the patch list before applying.`);
+
+    let updatedRawCode = cls.rawCode;
+    for (const patch of matching) {
+      if (!patch.originalSmali || !patch.patchedSmali) {
+        throw new Error(\`Patch for \${cls.name}->\${patch.methodName} is missing its exact original or replacement method body.\`);
+      }
+      const first = updatedRawCode.indexOf(patch.originalSmali);
+      if (first < 0 || updatedRawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
+        throw new Error(\`Patch rejected: original method block was not found uniquely in \${cls.filePath}. No DEX was generated.\`);
+      }
+      updatedRawCode = updatedRawCode.slice(0, first) +
+        patch.patchedSmali + updatedRawCode.slice(first + patch.originalSmali.length);
     }
 
-    const patch = matching[0];
-    if (!patch.originalSmali || !patch.patchedSmali) {
-      throw new Error(`Patch for ${cls.name}->${patch.methodName} is missing the exact original or replacement method body.`);
-    }
-    const first = cls.rawCode.indexOf(patch.originalSmali);
-    if (first < 0 || cls.rawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
-      throw new Error(`Patch rejected: exact original method block was not found uniquely in ${cls.filePath}. Source left unchanged.`);
-    }
-
-    const updatedRawCode = cls.rawCode.slice(0, first) +
-      patch.patchedSmali + cls.rawCode.slice(first + patch.originalSmali.length);
     const reparsed = parseSmali(updatedRawCode, cls.filePath);
     const parsedTarget = reparsed.find((parsed) => parsed.name === cls.name);
     if (!parsedTarget) {
-      throw new Error(`Patched Smali failed to parse as class ${cls.name}; no binary output created.`);
+      throw new Error(\`Patched source no longer parses as \${cls.name}; no DEX was generated.\`);
     }
     const validation = validateSmali(parsedTarget.rawCode);
     if (!validation.valid) {
-      throw new Error(`Patched Smali failed static validation in ${cls.filePath}: ${validation.errors.slice(0, 5).join('; ')}`);
+      throw new Error(\`Patched Smali failed validation in \${cls.filePath}: \${validation.errors.slice(0, 5).join('; ')}\`);
     }
     return parsedTarget;
   });
 
-  // Do not fall back to a hand-built DEX-shaped buffer.
-  throw new Error(
-    `Smali patch prepared for ${patchedClasses.length} classes, but ${outputDexFileName} was NOT generated. Configure the official smali assembler backend and independent DEX verifier before binary export.`
-  );
-}
+  const zip = new JSZip();
+  const pathSet = new Set<string>();
+  for (const cls of rebuiltClasses) {
+    const filePath = cls.filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+    if (!filePath.endsWith('.smali') || filePath.split('/').some((part) => part === '..' || part === '.')) {
+      throw new Error(\`Refusing unsafe Smali path "\${cls.filePath}".\`);
+    }
+    if (pathSet.has(filePath)) throw new Error(\`Duplicate Smali output path "\${filePath}".\`);
+    pathSet.add(filePath);
+    zip.file(filePath, cls.rawCode.split(/\r?\n/).filter((line) => line.trim() !== '.end class').join('\n'));
+  }
 
+  const zipBuffer = await zip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE', compressionOptions: { level: 1 } });
+  const dexResult = await assembleSmaliZipToDex(zipBuffer, outputDexFileName);
+  const integrityValidation = await validateRebuiltDexIntegrity(
+    originalClasses,
+    dexResult,
+    appliedPatches.map((patch) => ({ className: patch.className, methodName: patch.methodName }))
+  );
+
+  if (!integrityValidation.passed) {
+    throw new Error(integrityValidation.failureReason || 'Rebuilt DEX failed class-preservation or patch validation.');
+  }
+
+  return { dexResult, integrityValidation, rebuiltClasses };
+}
 /**
  * Creates the exact acceptance fixture for the DEX10 crash scenario:
  * Package: com.gold.youtube.om7753

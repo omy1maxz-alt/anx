@@ -379,9 +379,7 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
         setDex10IntegrityResult(integrity);
       }
 
-      if (onRegisterDexDownload) {
-        onRegisterDexDownload(result, outputFileName || 'classes10.dex');
-      }
+      onRegisterDexDownload?.(result, outputFileName || 'classes10.dex');
     } catch (err: any) {
       setIsAssembling(false);
       setAssemblyResult(null);

@@ -1337,14 +1337,15 @@ export async function validateRebuiltDexIntegrity(
       continue;
     }
     if (patch.methodName) {
+      const targetMethod = patch.methodName;
       const methodMatches = patchedClass.methods.filter((m) =>
-        m.name === patch.methodName ||
-        m.signature === patch.methodName ||
-        (patch.methodName.includes('(') && m.signature === patch.methodName.slice(patch.methodName.indexOf('->') + (patch.methodName.includes('->') ? 2 : 0)))
+        m.name === targetMethod ||
+        m.signature === targetMethod ||
+        (targetMethod.includes('(') && m.signature === targetMethod.slice(targetMethod.indexOf('->') + (targetMethod.includes('->') ? 2 : 0)))
       );
       if (methodMatches.length !== 1) {
         intendedPatchPresent = false;
-        validationLog.push(`[${now}] Intended patch check: Expected exactly one method "${patch.methodName}" in "${patch.className}", found ${methodMatches.length}.`);
+        validationLog.push(`[${now}] Intended patch check: Expected exactly one method "${targetMethod}" in "${patch.className}", found ${methodMatches.length}.`);
       }
     }
   }

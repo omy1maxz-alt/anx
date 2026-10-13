@@ -135,13 +135,13 @@ function dexIntegrity(bytes: Buffer): { sha256: string; sha1: string; adler32: s
 function getInputRoot(entries: string[], requestedRoot: string | undefined): string {
   const smaliPaths = entries.filter((entry) => entry.toLowerCase().endsWith('.smali'));
   const roots = new Map<string, number>();
-  const marker = /^(.*?)(smali(?:_classes\\d+)?|classes\\d*)\\//i;
+  const marker = /^(.*?)(smali(?:_classes\d+)?|classes\d*)\//i;
   for (const name of smaliPaths) {
     const match = name.match(marker);
     if (match) roots.set(match[0], (roots.get(match[0]) || 0) + 1);
   }
   if (requestedRoot) {
-    const root = safeArchivePath(requestedRoot).replace(/\\/?$/, '/');
+    const root = safeArchivePath(requestedRoot).replace(/\/+$/, '') + '/';
     if (!smaliPaths.some((name) => name.startsWith(root))) {
       throw new Error(`Selected Smali root "${requestedRoot}" contains no .smali files.`);
     }

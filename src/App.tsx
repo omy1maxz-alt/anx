@@ -257,7 +257,7 @@ export default function App() {
 
           setPreparedPackages([...customDexPackages, ...standardPackages]);
         }
-      }      } catch (err) {
+      } catch (err) {
         console.error('Failed to prepare download packages:', err);
       } finally {
         if (!isCancelled) {

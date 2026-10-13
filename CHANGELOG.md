@@ -148,3 +148,13 @@ All notable changes to DroidForensics are documented in this file.
   - Backed by server-side `/api/chat` using `gemini-3.8-flash` with conversation history and active session context injection.
   - Local knowledge engine fallback providing instant Smali and MT Manager guidance when offline or without API keys.
   - Floating action button (`Chat AI`), top Header button, and Dashboard quick card for 1-tap access.
+
+
+## [1.6.1] - 2026-10-13
+
+### Fixed
+- **Dev Server Pre-Warming & Startup Crash**:
+  - Fixed syntax error in `server.ts` regex literals where `\\//i` escaped the terminating delimiter, causing `TS1109` expression expected error.
+  - Fixed duplicate closing brace in `src/App.tsx`'s `buildPackages` effect.
+  - Fixed TypeScript compiler errors in `SmaliToDexView.tsx` and `smaliToDexAssembler.ts`.
+  - Re-authenticated health check and dev server on port 3000 (`/api/health` and `/api/chat` operational).

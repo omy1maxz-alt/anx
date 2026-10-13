@@ -249,3 +249,15 @@
      - Persistent thumb-zone floating action button (`Chat AI`) on bottom-right of screen.
      - Direct `Chat` button in the top `Header`.
      - Direct `AI Chat Copilot` card on the `Dashboard` hero area.
+
+
+## [13 October 2026] - Fix: Dev Server Process Pre-Warming Crash & TypeScript Errors
+- **Issue**: Pre-warming failed because the dev server process died on startup (`TS1109: Expression expected`).
+- **Root Cause**:
+  1. `server.ts` had regex literal escaping errors on lines 138 and 144 (`\\//i` escaped the closing slash), causing a syntax error when `tsx server.ts` started.
+  2. `src/App.tsx` had a duplicate closing brace in `buildPackages` (`} } catch (err) {`).
+  3. TypeScript strict checks in `SmaliToDexView.tsx` and `smaliToDexAssembler.ts`.
+- **Resolution**:
+  - Corrected regex literals and trailing slash handling in `server.ts`.
+  - Removed duplicate brace in `src/App.tsx`.
+  - Resolved TypeScript strict issues; dev server restarted and responds with HTTP 200 on `/api/health` and `/api/chat`. Verified `npm run build` and `npm run lint` succeed with zero errors.

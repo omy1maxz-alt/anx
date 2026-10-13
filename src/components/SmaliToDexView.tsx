@@ -283,42 +283,10 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
 
   // Execute the robust fix: regenerate from complete Smali dump preserving 100% of classes
   const handleRegenerateFromCompleteSmaliDump = async () => {
-    if (!dex10Disassembly) return;
-    setIsRegenerating(true);
-    setErrorMessage(null);
-    setAssembleProgressStep('Preserving 100% of original classes (including com.gold.youtube.om7753.App)...');
-
-    try {
-      // Auto-patching based on class/string heuristics is intentionally disabled.
-      // It previously replaced arbitrary methods (including lifecycle/initialization
-      // methods) with an incompatible static Context signature.
-      const patchesToApply: AppliedPatchRecord[] = [...appliedPatches];
-
-      if (patchesToApply.length === 0) {
-        throw new Error(
-          'No explicitly reviewed patch is selected. Automatic Chrome/adware patching is disabled because API/string heuristics cannot prove which method is the redirect trigger. Select a finding and approve its exact method patch in Patch Lab first.'
-        );
-      }
-
-      setAssembleProgressStep('Validating the approved patch and preserving every original class...');
-      const { dexResult, integrityValidation } = await regenerateDexFromCompleteSmaliDump(
-        dex10Disassembly.classes,
-        patchesToApply,
-        outputFileName || 'classes10.dex'
-      );
-
-      setAssemblyResult(dexResult);
-      setDex10IntegrityResult(integrityValidation);
-      setDex10ActiveStep(4);
-      setIsRegenerating(false);
-
-      if (onRegisterDexDownload) {
-        onRegisterDexDownload(dexResult, outputFileName || 'classes10.dex');
-      }
-    } catch (err: any) {
-      setIsRegenerating(false);
-      setErrorMessage(err.message || 'Regeneration failed.');
-    }
+    setIsRegenerating(false);
+    setErrorMessage(
+      'Safe DEX regeneration is disabled until an official Smali assembler backend is available. No DEX was generated or registered for download. Your original DEX and Smali ZIP remain unchanged.'
+    );
   };
 
   // ZIP file upload handler

@@ -218,12 +218,11 @@ export default function App() {
           'Safe binary DEX export is disabled: this build does not use the official Smali assembler. Export the cleaned Smali ZIP instead; DEX/APK downloads will be enabled after verified assembler integration.'
         );
 
-        // 4. Patched & Test-Signed APK
-        const apkRes = await buildPatchedApk(
-          originalApkBuffer,
-          workingCopyClasses,
-          undefined,
-          reportMd
+        // 4. APK rebuilding is intentionally not attempted until a real apktool + smali +
+        // zipalign + apksigner backend is configured. Never present a ZIP with placeholder
+        // DEX or fabricated signing blocks as an installable APK.
+        throw new Error(
+          'APK export is disabled because this project does not currently have a real APK rebuild/signing toolchain. The original APK remains unchanged; export the cleaned Smali ZIP for now.'
         );
 
         // 5. Forensic Audit Dossier

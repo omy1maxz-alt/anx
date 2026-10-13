@@ -316,68 +316,18 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
     setAssembleProgressStep('Preserving 100% of original classes (including com.gold.youtube.om7753.App)...');
 
     try {
-      // Find patches to apply: either from appliedPatches or auto-detect adware / update modal
+      // Auto-patching based on class/string heuristics is intentionally disabled.
+      // It previously replaced arbitrary methods (including lifecycle/initialization
+      // methods) with an incompatible static Context signature.
       const patchesToApply: AppliedPatchRecord[] = [...appliedPatches];
 
       if (patchesToApply.length === 0) {
-        // Auto-detect adware in dex10Disassembly.classes
-        const adwareClass = dex10Disassembly.classes.find((c) =>
-          c.methods.some(
-            (m) =>
-              m.stringsUsed.includes('com.android.chrome') ||
-              m.intentsTriggered.includes('com.android.chrome') ||
-              m.intentsTriggered.includes('startActivity') ||
-              m.rawCode.includes('com.android.chrome') ||
-              /daily|adware|chrome/i.test(c.simpleName)
-          )
+        throw new Error(
+          'No explicitly reviewed patch is selected. Automatic Chrome/adware patching is disabled because API/string heuristics cannot prove which method is the redirect trigger. Select a finding and approve its exact method patch in Patch Lab first.'
         );
-
-        if (adwareClass) {
-          const adwareMethod =
-            adwareClass.methods.find(
-              (m) =>
-                m.stringsUsed.includes('com.android.chrome') ||
-                m.rawCode.includes('com.android.chrome') ||
-                m.rawCode.includes('startActivity') ||
-                /daily|ad|chrome/i.test(m.name)
-            ) || adwareClass.methods[0];
-
-          patchesToApply.push({
-            id: 'patch-adware-auto',
-            timestamp: new Date().toISOString(),
-            findingId: 'FIND-ADWARE',
-            findingTitle: 'Chrome Auto-Launch Adware Neutralization',
-            className: adwareClass.name,
-            methodName: adwareMethod.name,
-            filePath: adwareClass.filePath,
-            originalSmali: adwareMethod.rawCode,
-            patchedSmali: `.method public static ${adwareMethod.name}(Landroid/content/Context;)V\n    .registers 2\n    # Adware neutralized: unprompted Chrome launch suppressed\n    return-void\n.end method`,
-            diffSummary: 'Suppressed unprompted Chrome adware launch',
-          });
-        } else {
-          // Check for ForcedUpdateDialog
-          const updateClass = dex10Disassembly.classes.find((c) => c.name.includes('ForcedUpdateDialog'));
-          if (updateClass) {
-            patchesToApply.push({
-              id: 'patch-dex10-update',
-              timestamp: new Date().toISOString(),
-              findingId: 'FIND-DEX10',
-              findingTitle: 'Forced Modal Update Remediation',
-              className: updateClass.name,
-              methodName: 'checkUpdate',
-              filePath: updateClass.filePath,
-              originalSmali: updateClass.methods[0]?.rawCode || '',
-              patchedSmali: `.method public static checkUpdate(Landroid/content/Context;)V\n    .registers 2\n    # Neutralized forced update modal; preserved clean return\n    return-void\n.end method`,
-              diffSummary: 'Neutralized blocking modal prompt',
-            });
-          }
-        }
       }
 
-      setAssembleProgressStep('Applying surgical patch while preserving all companion classes...');
-      await new Promise((r) => setTimeout(r, 60));
-
-      setAssembleProgressStep(`Assembling complete ${dex10Disassembly.classes.length}-class Dalvik 035 bytecode into ${outputFileName || 'classes10.dex'}...`);
+      setAssembleProgressStep('Validating the approved patch and preserving every original class...');
       const { dexResult, integrityValidation } = await regenerateDexFromCompleteSmaliDump(
         dex10Disassembly.classes,
         patchesToApply,

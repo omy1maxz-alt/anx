@@ -1518,32 +1518,13 @@ export async function disassembleDexToSmaliClasses(
       }
     }
 
-    // Default constructor if class data had 0 methods
-    if (classMethods.length === 0) {
-      smaliLines.push('# direct methods');
-      const ctorSmali = `.method public constructor <init>()V\n    .registers 1\n    invoke-direct {p0}, ${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V\n    return-void\n.end method`;
-      smaliLines.push(ctorSmali);
-      smaliLines.push('');
-      classMethods.push({
-        name: '<init>',
-        signature: '<init>()V',
-        returnType: 'V',
-        parameters: [],
-        accessFlags: ['public', 'constructor'],
-        registers: 1,
-        instructions: [
-          { raw: `invoke-direct {p0}, ${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V`, op: 'invoke-direct' },
-          { raw: 'return-void', op: 'return-void' },
-        ],
-        callees: [`${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V`],
-        stringsUsed: [],
-        intentsTriggered: [],
-        rawCode: ctorSmali,
-      });
+    // Never invent methods when the class_data parser fails. A synthesized constructor can
+    // silently change application initialization. The user must use a complete real Smali dump.
+    if (classDataOff > 0 && classMethods.length === 0) {
+      logs.push(`[CRITICAL] No methods decoded for ${classDescriptor}; exported Smali is incomplete and must not be used for rebuilding.`);
     }
 
-    // Smali has no .end class directive; the class ends after its final method/field.
-  // Do not emit the invalid directive into generated source.
+    // Smali has no .end class directive.
     const fullSmaliCode = smaliLines.join('\n');
 
     // Build package file path preserving directory structure

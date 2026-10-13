@@ -199,57 +199,22 @@ export default function App() {
             .map((p) => generateUnifiedDiff(p.originalSmali, p.patchedSmali, p.filePath))
             .join('\n\n');
         } else {
-          diffText =
-            '# DroidForensics Remediation Diff\n# No active bytecode modifications applied yet to working copy.\n';
+          diffText = '# DroidForensics Remediation Diff\n# No active bytecode modifications applied yet.\n';
         }
         const diffBytes = new TextEncoder().encode(diffText);
         const diffSha = await computeSha256(diffBytes);
 
-        // 2. Clean Smali ZIP
+        // 2. Clean Smali ZIP remains available: this contains source, not a runnable APK/DEX.
         const smaliZipRes = await buildCleanSmaliZip(
           workingCopyClasses,
           reportMd,
           originalZipBuffer
         );
-
-        // Real DEX assembly is not implemented by the handwritten browser encoder.
-        // Never label a synthetic or partially decoded buffer as a clean installable DEX.
-        throw new Error(
-          'Safe binary DEX export is disabled: this build does not use the official Smali assembler. Export the cleaned Smali ZIP instead; DEX/APK downloads will be enabled after verified assembler integration.'
-        );
-
-        // 4. APK rebuilding is intentionally not attempted until a real apktool + smali +
-        // zipalign + apksigner backend is configured. Never present a ZIP with placeholder
-        // DEX or fabricated signing blocks as an installable APK.
-        throw new Error(
-          'APK export is disabled because this project does not currently have a real APK rebuild/signing toolchain. The original APK remains unchanged; export the cleaned Smali ZIP for now.'
-        );
-
-        // 5. Forensic Audit Dossier
         const reportBytes = new TextEncoder().encode(reportMd);
         const reportSha = await computeSha256(reportBytes);
 
         if (!isCancelled) {
           const standardPackages: DownloadPackageItem[] = [
-            {
-              id: 'apk',
-              label: 'Patched & Test-Signed APK',
-              filename: `${baseName}_remediated_signed.apk`,
-              format: 'APK (Android Package Archive)',
-              sizeBytes: apkRes.size,
-              sha256: apkRes.sha256,
-              validationStatus: 'Validated',
-              modifiedFiles: [
-                'classes.dex',
-                'META-INF/MANIFEST.MF',
-                'META-INF/CERT.SF',
-                'META-INF/CERT.RSA',
-                ...modifiedFilePaths,
-              ],
-              description:
-                'Complete Android package archive with neutralized bytecode, updated resources, and standard v1 test key signing disclosure.',
-              getBlob: async () => apkRes.blob,
-            },
             {
               id: 'smali_zip',
               label: 'Clean Smali Source ZIP',
@@ -257,24 +222,11 @@ export default function App() {
               format: 'ZIP (Smali Sources)',
               sizeBytes: smaliZipRes.size,
               sha256: smaliZipRes.sha256,
-              validationStatus: 'Validated',
-              modifiedFiles:
-                modifiedFilePaths.length > 0 ? modifiedFilePaths : ['smali/app/MainActivity.smali'],
+              validationStatus: 'Ready',
+              modifiedFiles: modifiedFilePaths,
               description:
-                'Preserved directory structure containing corrected Smali files, REMEDIATION_AUDIT_REPORT.md, and PATCH_MANIFEST.json.',
+                'Source-only export. This is not a DEX or installable APK; assemble it with an official Smali toolchain.',
               getBlob: async () => smaliZipRes.blob,
-            },
-            {
-              id: 'dex',
-              label: `Clean ${activeDexName} (Ready for MT Manager)`,
-              filename: activeDexName,
-              format: 'DEX (Dalvik Executable)',
-              sizeBytes: dexSize,
-              sha256: dexSha,
-              validationStatus: 'Validated',
-              modifiedFiles: [activeDexName],
-              description: `${dexDesc} Saved as "${activeDexName}" for direct replacement into APK in MT Manager.`,
-              getBlob: async () => dexBlob,
             },
             {
               id: 'patch_diff',
@@ -283,10 +235,9 @@ export default function App() {
               format: 'PATCH (Unified Diff)',
               sizeBytes: diffBytes.byteLength,
               sha256: diffSha,
-              validationStatus: 'Validated',
+              validationStatus: 'Ready',
               modifiedFiles: modifiedFilePaths,
-              description:
-                'Standard multi-file git/unified diff format detailing exact instructions altered and Dalvik register safety checks.',
+              description: 'Reviewable source diff for the approved edits.',
               getBlob: async () => new Blob([diffBytes], { type: 'text/plain' }),
             },
             {
@@ -296,17 +247,17 @@ export default function App() {
               format: 'MARKDOWN (Forensic Dossier)',
               sizeBytes: reportBytes.byteLength,
               sha256: reportSha,
-              validationStatus: 'Validated',
+              validationStatus: 'Ready',
               modifiedFiles: [],
               description:
-                'Full evidentiary forensic report with root cause analysis, call graph chains, confidence scores, and regression test steps.',
+                'Evidence and static analysis report. It does not claim runtime or binary validation.',
               getBlob: async () => new Blob([reportBytes], { type: 'text/markdown' }),
             },
           ];
 
           setPreparedPackages([...customDexPackages, ...standardPackages]);
         }
-      } catch (err) {
+      }      } catch (err) {
         console.error('Failed to prepare download packages:', err);
       } finally {
         if (!isCancelled) {

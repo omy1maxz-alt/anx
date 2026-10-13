@@ -421,6 +421,14 @@ export async function buildPatchedApk(
     zip.file('resources.arsc', new Uint8Array([0x02, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00]));
   }
 
+  // Do not generate an APK using a synthetic DEX buffer or fabricated signature files.
+  // This frontend has no real APK rebuild/alignment/signing toolchain. Failing closed is safer
+  // than producing an APK that appears ready to install but will fail at runtime.
+  throw new Error(
+    'APK rebuilding is disabled until a real backend integrates apktool/baksmali, smali assembly, zip alignment, and a real signing tool. No APK was generated.'
+  );
+
+  /* Disabled unsafe placeholder implementation:
   // Update Smali / DEX files
   for (const cls of classes) {
     const smaliPath = cls.filePath.startsWith('/') ? cls.filePath.substring(1) : cls.filePath;
@@ -428,7 +436,6 @@ export async function buildPatchedApk(
     filesChanged.push(smaliPath);
   }
 
-  // Create clean patched DEX representation
   const patchedDexResult = await buildPatchedDex(classes);
   const dexArray = await patchedDexResult.blob.arrayBuffer();
   zip.file('classes.dex', dexArray);

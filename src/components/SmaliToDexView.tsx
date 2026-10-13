@@ -342,10 +342,40 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
 
   // Execute the robust fix: regenerate from complete Smali dump preserving 100% of classes
   const handleRegenerateFromCompleteSmaliDump = async () => {
-    setIsRegenerating(false);
-    setErrorMessage(
-      'Safe DEX regeneration is disabled until an official Smali assembler backend is available. No DEX was generated or registered for download. Your original DEX and Smali ZIP remain unchanged.'
-    );
+    if (!dex10Disassembly) {
+      setErrorMessage('Load the complete original DEX or Smali ZIP before rebuilding.');
+      return;
+    }
+    if (appliedPatches.length === 0) {
+      setErrorMessage('No approved patch is selected. Review and approve the exact method patch in Patch Lab first.');
+      return;
+    }
+
+    setIsRegenerating(true);
+    setErrorMessage(null);
+    setAssembleProgressStep(`Applying ${appliedPatches.length} approved patch(es) to the complete ${dex10Disassembly.classes.length}-class source...`);
+
+    try {
+      const { dexResult, integrityValidation } = await regenerateDexFromCompleteSmaliDump(
+        dex10Disassembly.classes,
+        appliedPatches,
+        outputFileName || 'classes10.dex'
+      );
+
+      if (!integrityValidation.passed) {
+        throw new Error(integrityValidation.failureReason || 'Rebuilt DEX failed validation. Download was blocked.');
+      }
+
+      setAssemblyResult(dexResult);
+      setDex10IntegrityResult(integrityValidation);
+      setDex10ActiveStep(4);
+      onRegisterDexDownload?.(dexResult, outputFileName || 'classes10.dex');
+    } catch (err: unknown) {
+      setAssemblyResult(null);
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsRegenerating(false);
+    }
   };
 
   // ZIP file upload handler

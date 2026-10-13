@@ -401,21 +401,32 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
         setAssembleProgressStep('Extracting Smali files and validating directory hierarchy...');
         await new Promise((r) => setTimeout(r, 60));
 
-        // assembleSmaliZipToDex previously called a handwritten placeholder encoder.
-        // It is disabled until official smali assembly and independent validation exist.
-        throw new Error(
-          'DEX assembly is currently disabled to prevent corrupt output. The ZIP was not converted. Use the Clean Smali ZIP export; DEX download will return after the official assembler backend is integrated.'
+        result = await assembleSmaliZipToDex(
+          zipBuffer,
+          uploadedZipFile.name,
+          selectedRootPrefix || undefined
         );
       } else {
-        // Workspace mode
+        // Workspace mode: export the entire class set to a temporary Smali ZIP and
+        // let the official server-side assembler process it.
         if (currentClasses.length === 0) {
-          throw new Error('No Smali classes currently loaded in workspace. Upload an APK or pick a test scenario first.');
+          throw new Error('No Smali classes currently loaded in workspace. Upload a Smali ZIP first.');
         }
 
-        setAssembleProgressStep(`Validating ${currentClasses.length} workspace classes...`);
-        throw new Error(
-          'DEX assembly is disabled until the official Smali assembler backend is configured. No DEX was generated.'
-        );
+        setAssembleProgressStep(`Preparing \${currentClasses.length} complete Smali classes for assembly...`);
+        const workspaceZip = new JSZip();
+        const seenPaths = new Set<string>();
+        for (const cls of currentClasses) {
+          const path = cls.filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+          if (!path.endsWith('.smali') || path.split('/').some((part) => part === '..' || part === '.')) {
+            throw new Error(`Unsafe Smali source path: \${cls.filePath}`);
+          }
+          if (seenPaths.has(path)) throw new Error(`Duplicate Smali source path: \${path}`);
+          seenPaths.add(path);
+          workspaceZip.file(path, cls.rawCode.split(/\r?\n/).filter((line) => line.trim() !== '.end class').join('\n'));
+        }
+        const workspaceBuffer = await workspaceZip.generateAsync({ type: 'arraybuffer', compression: 'DEFLATE' });
+        result = await assembleSmaliZipToDex(workspaceBuffer, 'workspace-smali.zip');
       }
 
       setAssembleProgressStep('Computing Adler-32 checksum and SHA-1 signature...');

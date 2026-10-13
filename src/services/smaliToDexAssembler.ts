@@ -510,15 +510,15 @@ export async function assembleSmaliZipToDex(
   const startTime = Date.now();
   const extracted = await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
   const root = extracted.selectedRoot;
-  const query = root ? `?root=\${encodeURIComponent(root)}` : '';
-  const response = await fetch(`/api/assemble-smali-zip\${query}`, {
+  const query = root ? `?root=${encodeURIComponent(root)}` : '';
+  const response = await fetch(`/api/assemble-smali-zip${query}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/zip' },
     body: zipBuffer,
   });
 
   if (!response.ok) {
-    let message = `Smali assembler backend failed with HTTP \${response.status}.`;
+    let message = `Smali assembler backend failed with HTTP ${response.status}.`;
     try {
       const body = await response.json();
       if (typeof body?.error === 'string') message = body.error;
@@ -535,13 +535,13 @@ export async function assembleSmaliZipToDex(
   const bytes = new Uint8Array(await response.arrayBuffer());
   const verificationReport = await verifyDexBinary(bytes);
   if (!verificationReport.isStructurallyValid) {
-    throw new Error(`Server returned a DEX that failed client-side structural checks: \${verificationReport.details.join('; ')}`);
+    throw new Error(`Server returned a DEX that failed client-side structural checks: ${verificationReport.details.join('; ')}`);
   }
 
   const reportedClassCount = Number(response.headers.get('X-Dex-Class-Count'));
   if (!Number.isFinite(reportedClassCount) || reportedClassCount !== extracted.classes.length) {
     throw new Error(
-      `DEX class count mismatch for "\${zipFileName}": input contains \${extracted.classes.length} parsed classes, backend reports \${response.headers.get('X-Dex-Class-Count') || 'unknown'}.`
+      `DEX class count mismatch for "${zipFileName}": input contains ${extracted.classes.length} parsed classes, backend reports ${response.headers.get('X-Dex-Class-Count') || 'unknown'}.`
     );
   }
 
@@ -563,7 +563,7 @@ export async function assembleSmaliZipToDex(
     size: bytes.byteLength,
     sha256,
     sha1,
-    adler32: `0x\${adler32.toUpperCase()}`,
+    adler32: `0x${adler32.toUpperCase()}`,
     classCount: reportedClassCount,
     methodCount,
     fieldCount,
@@ -577,7 +577,7 @@ export async function assembleSmaliZipToDex(
       valid: true,
       errors: [],
       warnings: ['Static Smali assembly and DEX round-trip validation passed. Application runtime behavior has not been tested.'],
-      registerStatus: `Parsed \${methodCount} defined methods across \${reportedClassCount} classes.`,
+      registerStatus: `Parsed ${methodCount} defined methods across ${reportedClassCount} classes.`,
       branchTargetStatus: 'Official Smali assembler succeeded and Baksmali round-trip class-set validation passed.',
       exceptionRangeStatus: 'DEX header, SHA-1, Adler-32, and class-set checks passed.',
       integrityChecksum: sha256,
@@ -585,11 +585,11 @@ export async function assembleSmaliZipToDex(
     },
     buildLog: [
       ...extracted.logs,
-      `Official Smali assembler completed for \${zipFileName}.`,
-      `Baksmali round-trip verified \${reportedClassCount} classes.`,
-      `SHA-256: \${sha256}`,
-      `SHA-1: \${sha1}`,
-      `Adler-32: 0x\${adler32.toUpperCase()}`,
+      `Official Smali assembler completed for ${zipFileName}.`,
+      `Baksmali round-trip verified ${reportedClassCount} classes.`,
+      `SHA-256: ${sha256}`,
+      `SHA-1: ${sha1}`,
+      `Adler-32: 0x${adler32.toUpperCase()}`,
     ],
   };
 }
@@ -1531,7 +1531,7 @@ export async function regenerateDexFromCompleteSmaliDump(
   const seen = new Set<string>();
   for (const cls of originalClasses) {
     if (!cls.name || seen.has(cls.name)) {
-      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "\${cls.name || '(empty)'}".`);
+      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "${cls.name || '(empty)'}".`);
     }
     seen.add(cls.name);
   }
@@ -1545,11 +1545,11 @@ export async function regenerateDexFromCompleteSmaliDump(
     let updatedRawCode = cls.rawCode;
     for (const patch of matching) {
       if (!patch.originalSmali || !patch.patchedSmali) {
-        throw new Error(`Patch for \${cls.name}->\${patch.methodName} is missing its exact original or replacement method body.`);
+        throw new Error(`Patch for ${cls.name}->${patch.methodName} is missing its exact original or replacement method body.`);
       }
       const first = updatedRawCode.indexOf(patch.originalSmali);
       if (first < 0 || updatedRawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
-        throw new Error(`Patch rejected: original method block was not found uniquely in \${cls.filePath}. No DEX was generated.`);
+        throw new Error(`Patch rejected: original method block was not found uniquely in ${cls.filePath}. No DEX was generated.`);
       }
       updatedRawCode = updatedRawCode.slice(0, first) +
         patch.patchedSmali + updatedRawCode.slice(first + patch.originalSmali.length);
@@ -1558,11 +1558,11 @@ export async function regenerateDexFromCompleteSmaliDump(
     const reparsed = parseSmali(updatedRawCode, cls.filePath);
     const parsedTarget = reparsed.find((parsed) => parsed.name === cls.name);
     if (!parsedTarget) {
-      throw new Error(`Patched source no longer parses as \${cls.name}; no DEX was generated.`);
+      throw new Error(`Patched source no longer parses as ${cls.name}; no DEX was generated.`);
     }
     const validation = validateSmali(parsedTarget.rawCode);
     if (!validation.valid) {
-      throw new Error(`Patched Smali failed validation in \${cls.filePath}: \${validation.errors.slice(0, 5).join('; ')}`);
+      throw new Error(`Patched Smali failed validation in ${cls.filePath}: ${validation.errors.slice(0, 5).join('; ')}`);
     }
     return parsedTarget;
   });
@@ -1572,9 +1572,9 @@ export async function regenerateDexFromCompleteSmaliDump(
   for (const cls of rebuiltClasses) {
     const filePath = cls.filePath.replace(/\\/g, '/').replace(/^\/+/, '');
     if (!filePath.endsWith('.smali') || filePath.split('/').some((part) => part === '..' || part === '.')) {
-      throw new Error(`Refusing unsafe Smali path "\${cls.filePath}".`);
+      throw new Error(`Refusing unsafe Smali path "${cls.filePath}".`);
     }
-    if (pathSet.has(filePath)) throw new Error(`Duplicate Smali output path "\${filePath}".`);
+    if (pathSet.has(filePath)) throw new Error(`Duplicate Smali output path "${filePath}".`);
     pathSet.add(filePath);
     zip.file(filePath, cls.rawCode.split(/\r?\n/).filter((line) => line.trim() !== '.end class').join('\n'));
   }

@@ -1542,7 +1542,8 @@ export async function disassembleDexToSmaliClasses(
       });
     }
 
-    smaliLines.push('.end class');
+    // Smali has no .end class directive; the class ends after its final method/field.
+  // Do not emit the invalid directive into generated source.
     const fullSmaliCode = smaliLines.join('\n');
 
     // Build package file path preserving directory structure

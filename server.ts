@@ -105,12 +105,12 @@ async function listFilesRecursive(root: string, current = root): Promise<string[
 }
 
 function classDescriptorFromSmali(text: string): string | null {
-  const match = text.match(/^\\s*\\.class\\s+.*?\\b(L[^;\\s]+;)[^\\r\\n]*$/m);
+  const match = text.match(/^\s*\.class\s+.*?\b(L[^;\s]+;)[^\r\n]*$/m);
   return match?.[1] || null;
 }
 
 function dexIntegrity(bytes: Buffer): { sha256: string; sha1: string; adler32: string } {
-  if (bytes.length < 112 || bytes.toString('ascii', 0, 4) !== 'dex\\n' ||
+  if (bytes.length < 112 || bytes.toString('ascii', 0, 4) !== 'dex\n' ||
       bytes.readUInt32LE(32) !== bytes.length || bytes.readUInt32LE(36) !== 112 ||
       bytes.readUInt32LE(40) !== 0x12345678) {
     throw new Error('Assembler output failed DEX header/size validation.');
@@ -195,7 +195,7 @@ async function assembleSmaliZipOnServer(zipBytes: Buffer, requestedRoot: string 
     const relative = root ? name.slice(root.length) : name;
     const relSafe = safeArchivePath(relative);
     if (!relSafe.toLowerCase().endsWith('.smali')) continue;
-    const source = data.toString('utf8').split(/\\r?\\n/).filter((line) => line.trim() !== '.end class').join('\\n');
+    const source = data.toString('utf8').split(/\r?\n/).filter((line) => line.trim() !== '.end class').join('\n');
     const descriptor = classDescriptorFromSmali(source);
     if (!descriptor) throw new Error(`Missing valid .class declaration in ${name}`);
     if (inputDescriptors.has(descriptor)) throw new Error(`Duplicate class descriptor in input Smali: ${descriptor}`);
@@ -230,7 +230,7 @@ async function assembleSmaliZipOnServer(zipBytes: Buffer, requestedRoot: string 
 }
 
 async function disassembleDexOnServer(dexBytes: Buffer, sourceName: string, tempRoot: string): Promise<{ zipBytes: Buffer; classCount: number }> {
-  if (dexBytes.byteLength < 112 || dexBytes.byteLength > 100 * 1024 * 1024 || dexBytes.toString('ascii', 0, 4) !== 'dex\\n') {
+  if (dexBytes.byteLength < 112 || dexBytes.byteLength > 100 * 1024 * 1024 || dexBytes.toString('ascii', 0, 4) !== 'dex\n') {
     throw new Error('Upload must be one valid DEX binary, between 112 bytes and 100 MB.');
   }
   const tools = requireToolchain();
@@ -243,7 +243,7 @@ async function disassembleDexOnServer(dexBytes: Buffer, sourceName: string, temp
   if (fileNames.length === 0) throw new Error('Baksmali produced no Smali files.');
   if (fileNames.length > MAX_ARCHIVE_ENTRIES) throw new Error('Decoded DEX has too many classes for ZIP export.');
   const dexFileName = sourceName.replace(/[^A-Za-z0-9_.-]/g, '');
-  const match = dexFileName.match(/classes?(\\d*)\\.dex/i);
+  const match = dexFileName.match(/classes?(\d*)\.dex/i);
   const num = match?.[1] || '';
   const rootName = num && num !== '1' ? `smali_classes${num}` : 'smali';
   const zip = new JSZip();

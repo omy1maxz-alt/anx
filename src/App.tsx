@@ -212,44 +212,11 @@ export default function App() {
           originalZipBuffer
         );
 
-        // 3. Patched DEX (assemble using real binary DEX 035 assembler)
-        let dexBlob: Blob;
-        let dexSize: number;
-        let dexSha: string;
-        let dexDesc =
-          'Synthesized Dalvik 035 bytecode binary with aligned class offsets, verified method headers, and neutral return stubs.';
-
-        if (workingCopyClasses.length > 0) {
-          let classesToAssemble = workingCopyClasses;
-          // If original parsedClasses contains more classes than workingCopy, regenerate to prevent ClassNotFoundException!
-          if (session.parsedClasses.length > workingCopyClasses.length) {
-            try {
-              const regen = await regenerateDexFromCompleteSmaliDump(
-                session.parsedClasses,
-                appliedPatches,
-                'classes10.dex'
-              );
-              classesToAssemble = regen.rebuiltClasses;
-            } catch (regenErr) {
-              console.warn('DEX regeneration from dump fallback:', regenErr);
-              classesToAssemble = workingCopyClasses;
-            }
-          }
-          try {
-            const assembled = await assembleClassesToDex(classesToAssemble, baseName);
-            dexBlob = assembled.blob;
-            dexSize = assembled.size;
-            dexSha = assembled.sha256;
-            dexDesc = `Compiled Dalvik 035 binary with ${assembled.classCount} classes, ${assembled.methodCount} methods, and Adler-32 (${assembled.adler32}) checksum.`;
-          } catch (assemblyErr) {
-            // Fail closed: never package a synthetic/placeholder DEX as if it were real bytecode.
-            throw new Error(
-              `DEX assembly failed. No patched DEX or APK was generated. ${assemblyErr instanceof Error ? assemblyErr.message : String(assemblyErr)}`
-            );
-          }
-        } else {
-          throw new Error('Cannot build a DEX: no complete parsed class set is available. Upload a complete DEX or Smali dump first.');
-        }
+        // Real DEX assembly is not implemented by the handwritten browser encoder.
+        // Never label a synthetic or partially decoded buffer as a clean installable DEX.
+        throw new Error(
+          'Safe binary DEX export is disabled: this build does not use the official Smali assembler. Export the cleaned Smali ZIP instead; DEX/APK downloads will be enabled after verified assembler integration.'
+        );
 
         // 4. Patched & Test-Signed APK
         const apkRes = await buildPatchedApk(

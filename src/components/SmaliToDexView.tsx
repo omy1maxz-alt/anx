@@ -65,14 +65,14 @@ async function disassembleDexWithBackend(
   dexBuffer: ArrayBuffer,
   sourceName: string
 ): Promise<DisassembledDexResult> {
-  const response = await fetch(\`/api/disassemble-dex?filename=\${encodeURIComponent(sourceName)}\`, {
+  const response = await fetch(`/api/disassemble-dex?filename=\${encodeURIComponent(sourceName)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/vnd.android.dex' },
     body: dexBuffer,
   });
 
   if (!response.ok) {
-    let message = \`Baksmali backend failed with HTTP \${response.status}.\`;
+    let message = `Baksmali backend failed with HTTP \${response.status}.`;
     try {
       const body = await response.json();
       if (typeof body?.error === 'string') message = body.error;
@@ -97,7 +97,7 @@ async function disassembleDexWithBackend(
   const reportedClassCount = Number(response.headers.get('X-Dex-Class-Count')) || descriptors.length;
 
   if (reportedClassCount !== descriptors.length) {
-    throw new Error(\`Baksmali class count mismatch: backend reported \${reportedClassCount}, ZIP contains \${descriptors.length} parsed classes.\`);
+    throw new Error(`Baksmali class count mismatch: backend reported \${reportedClassCount}, ZIP contains \${descriptors.length} parsed classes.`);
   }
 
   return {
@@ -105,7 +105,7 @@ async function disassembleDexWithBackend(
     classDescriptors: descriptors,
     dexMetadata: {
       fileName: sourceName,
-      version: \`DEX \${version}\`,
+      version: `DEX \${version}`,
       fileSize: dexBuffer.byteLength,
       classCount: reportedClassCount,
       stringCount: view.getUint32(0x38, true),

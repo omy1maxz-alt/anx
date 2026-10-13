@@ -242,18 +242,13 @@ export default function App() {
             dexSha = assembled.sha256;
             dexDesc = `Compiled Dalvik 035 binary with ${assembled.classCount} classes, ${assembled.methodCount} methods, and Adler-32 (${assembled.adler32}) checksum.`;
           } catch (assemblyErr) {
-            console.warn('Binary DEX assembly fallback to patched DEX generator:', assemblyErr);
-            const fallback = await buildPatchedDex(classesToAssemble, originalDexBuffer);
-            dexBlob = fallback.blob;
-            dexSize = fallback.size;
-            dexSha = fallback.sha256;
-            dexDesc = 'Patched Dalvik executable bytecode (binary with aligned class offsets).';
+            // Fail closed: never package a synthetic/placeholder DEX as if it were real bytecode.
+            throw new Error(
+              `DEX assembly failed. No patched DEX or APK was generated. ${assemblyErr instanceof Error ? assemblyErr.message : String(assemblyErr)}`
+            );
           }
         } else {
-          const fallback = await buildPatchedDex(workingCopyClasses, originalDexBuffer);
-          dexBlob = fallback.blob;
-          dexSize = fallback.size;
-          dexSha = fallback.sha256;
+          throw new Error('Cannot build a DEX: no complete parsed class set is available. Upload a complete DEX or Smali dump first.');
         }
 
         // 4. Patched & Test-Signed APK

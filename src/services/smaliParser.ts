@@ -19,7 +19,13 @@ const LIFECYCLE_METHODS = new Set([
 ]);
 
 export function parseSmali(smaliText: string, filePath: string = 'unknown.smali'): SmaliClass[] {
-  const lines = smaliText.split(/\r?\n/);
+  // MT Manager / third-party generators sometimes append ".end class", which is not a
+  // valid Smali directive. Normalize it out instead of passing invalid text downstream.
+  const normalizedSmaliText = smaliText
+    .split(/\r?\n/)
+    .filter((line) => line.trim() !== '.end class')
+    .join('\n');
+  const lines = normalizedSmaliText.split(/\r?\n/);
   const classes: SmaliClass[] = [];
 
   let currentClass: Partial<SmaliClass> | null = null;
@@ -59,7 +65,7 @@ export function parseSmali(smaliText: string, filePath: string = 'unknown.smali'
         interfaces: [],
         fields: [],
         methods: [],
-        rawCode: smaliText,
+        rawCode: normalizedSmaliText,
         filePath,
       };
       continue;

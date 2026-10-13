@@ -199,96 +199,22 @@ export default function App() {
             .map((p) => generateUnifiedDiff(p.originalSmali, p.patchedSmali, p.filePath))
             .join('\n\n');
         } else {
-          diffText =
-            '# DroidForensics Remediation Diff\n# No active bytecode modifications applied yet to working copy.\n';
+          diffText = '# DroidForensics Remediation Diff\n# No active bytecode modifications applied yet.\n';
         }
         const diffBytes = new TextEncoder().encode(diffText);
         const diffSha = await computeSha256(diffBytes);
 
-        // 2. Clean Smali ZIP
+        // 2. Clean Smali ZIP remains available: this contains source, not a runnable APK/DEX.
         const smaliZipRes = await buildCleanSmaliZip(
           workingCopyClasses,
           reportMd,
           originalZipBuffer
         );
-
-        // 3. Patched DEX (assemble using real binary DEX 035 assembler)
-        let dexBlob: Blob;
-        let dexSize: number;
-        let dexSha: string;
-        let dexDesc =
-          'Synthesized Dalvik 035 bytecode binary with aligned class offsets, verified method headers, and neutral return stubs.';
-
-        if (workingCopyClasses.length > 0) {
-          let classesToAssemble = workingCopyClasses;
-          // If original parsedClasses contains more classes than workingCopy, regenerate to prevent ClassNotFoundException!
-          if (session.parsedClasses.length > workingCopyClasses.length) {
-            try {
-              const regen = await regenerateDexFromCompleteSmaliDump(
-                session.parsedClasses,
-                appliedPatches,
-                'classes10.dex'
-              );
-              classesToAssemble = regen.rebuiltClasses;
-            } catch (regenErr) {
-              console.warn('DEX regeneration from dump fallback:', regenErr);
-              classesToAssemble = workingCopyClasses;
-            }
-          }
-          try {
-            const assembled = await assembleClassesToDex(classesToAssemble, baseName);
-            dexBlob = assembled.blob;
-            dexSize = assembled.size;
-            dexSha = assembled.sha256;
-            dexDesc = `Compiled Dalvik 035 binary with ${assembled.classCount} classes, ${assembled.methodCount} methods, and Adler-32 (${assembled.adler32}) checksum.`;
-          } catch (assemblyErr) {
-            console.warn('Binary DEX assembly fallback to patched DEX generator:', assemblyErr);
-            const fallback = await buildPatchedDex(classesToAssemble, originalDexBuffer);
-            dexBlob = fallback.blob;
-            dexSize = fallback.size;
-            dexSha = fallback.sha256;
-            dexDesc = 'Patched Dalvik executable bytecode (binary with aligned class offsets).';
-          }
-        } else {
-          const fallback = await buildPatchedDex(workingCopyClasses, originalDexBuffer);
-          dexBlob = fallback.blob;
-          dexSize = fallback.size;
-          dexSha = fallback.sha256;
-        }
-
-        // 4. Patched & Test-Signed APK
-        const apkRes = await buildPatchedApk(
-          originalApkBuffer,
-          workingCopyClasses,
-          undefined,
-          reportMd
-        );
-
-        // 5. Forensic Audit Dossier
         const reportBytes = new TextEncoder().encode(reportMd);
         const reportSha = await computeSha256(reportBytes);
 
         if (!isCancelled) {
           const standardPackages: DownloadPackageItem[] = [
-            {
-              id: 'apk',
-              label: 'Patched & Test-Signed APK',
-              filename: `${baseName}_remediated_signed.apk`,
-              format: 'APK (Android Package Archive)',
-              sizeBytes: apkRes.size,
-              sha256: apkRes.sha256,
-              validationStatus: 'Validated',
-              modifiedFiles: [
-                'classes.dex',
-                'META-INF/MANIFEST.MF',
-                'META-INF/CERT.SF',
-                'META-INF/CERT.RSA',
-                ...modifiedFilePaths,
-              ],
-              description:
-                'Complete Android package archive with neutralized bytecode, updated resources, and standard v1 test key signing disclosure.',
-              getBlob: async () => apkRes.blob,
-            },
             {
               id: 'smali_zip',
               label: 'Clean Smali Source ZIP',
@@ -296,24 +222,11 @@ export default function App() {
               format: 'ZIP (Smali Sources)',
               sizeBytes: smaliZipRes.size,
               sha256: smaliZipRes.sha256,
-              validationStatus: 'Validated',
-              modifiedFiles:
-                modifiedFilePaths.length > 0 ? modifiedFilePaths : ['smali/app/MainActivity.smali'],
+              validationStatus: 'Ready',
+              modifiedFiles: modifiedFilePaths,
               description:
-                'Preserved directory structure containing corrected Smali files, REMEDIATION_AUDIT_REPORT.md, and PATCH_MANIFEST.json.',
+                'Source-only export. This is not a DEX or installable APK; assemble it with an official Smali toolchain.',
               getBlob: async () => smaliZipRes.blob,
-            },
-            {
-              id: 'dex',
-              label: `Clean ${activeDexName} (Ready for MT Manager)`,
-              filename: activeDexName,
-              format: 'DEX (Dalvik Executable)',
-              sizeBytes: dexSize,
-              sha256: dexSha,
-              validationStatus: 'Validated',
-              modifiedFiles: [activeDexName],
-              description: `${dexDesc} Saved as "${activeDexName}" for direct replacement into APK in MT Manager.`,
-              getBlob: async () => dexBlob,
             },
             {
               id: 'patch_diff',
@@ -322,10 +235,9 @@ export default function App() {
               format: 'PATCH (Unified Diff)',
               sizeBytes: diffBytes.byteLength,
               sha256: diffSha,
-              validationStatus: 'Validated',
+              validationStatus: 'Ready',
               modifiedFiles: modifiedFilePaths,
-              description:
-                'Standard multi-file git/unified diff format detailing exact instructions altered and Dalvik register safety checks.',
+              description: 'Reviewable source diff for the approved edits.',
               getBlob: async () => new Blob([diffBytes], { type: 'text/plain' }),
             },
             {
@@ -335,17 +247,17 @@ export default function App() {
               format: 'MARKDOWN (Forensic Dossier)',
               sizeBytes: reportBytes.byteLength,
               sha256: reportSha,
-              validationStatus: 'Validated',
+              validationStatus: 'Ready',
               modifiedFiles: [],
               description:
-                'Full evidentiary forensic report with root cause analysis, call graph chains, confidence scores, and regression test steps.',
+                'Evidence and static analysis report. It does not claim runtime or binary validation.',
               getBlob: async () => new Blob([reportBytes], { type: 'text/markdown' }),
             },
           ];
 
           setPreparedPackages([...customDexPackages, ...standardPackages]);
         }
-      } catch (err) {
+      }      } catch (err) {
         console.error('Failed to prepare download packages:', err);
       } finally {
         if (!isCancelled) {

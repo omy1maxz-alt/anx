@@ -274,20 +274,51 @@ export function applyPatchToClass(
     ? targetMethodNameOrSignature.split('(')[0].replace(/^.*->/, '')
     : targetMethodNameOrSignature;
 
+  // Match the complete method declaration rather than the method name alone.
+  const normalizedTarget = targetMethodNameOrSignature.includes('->')
+    ? targetMethodNameOrSignature.slice(targetMethodNameOrSignature.indexOf('->') + 2)
+    : targetMethodNameOrSignature;
+  const descriptorTarget = normalizedTarget.includes('(') ? normalizedTarget : null;
+
   let startIdx = -1;
   let endIdx = -1;
+  let duplicateMatches = 0;
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
-    if (trimmed.startsWith('.method ') && (trimmed.includes(targetMethodNameOrSignature) || trimmed.includes(` ${cleanTarget}(`))) {
-      startIdx = i;
-      break;
+    if (!trimmed.startsWith('.method ')) continue;
+
+    const declaration = trimmed.replace(/^\.method\s+/, '');
+    const nameAndDescriptor = declaration.match(/([\w$<>-]+\([^)]*\)[^\s]+)\s*$/)?.[1];
+    const matches = descriptorTarget
+      ? nameAndDescriptor === descriptorTarget
+      : trimmed.includes(` ${cleanTarget}(`);
+
+    if (matches) {
+      duplicateMatches++;
+      if (startIdx === -1) startIdx = i;
     }
   }
 
+  if (descriptorTarget && duplicateMatches !== 1) {
+    throw new Error(
+      duplicateMatches === 0
+        ? `Patch rejected: exact method "${descriptorTarget}" was not found. No method was added or changed.`
+        : `Patch rejected: exact method "${descriptorTarget}" appears ${duplicateMatches} times. Resolve duplicate method definitions before patching.`
+    );
+  }
+
+  // If matching by name only, ambiguous overloads must also fail closed.
+  if (!descriptorTarget && duplicateMatches > 1) {
+    throw new Error(
+      `Patch rejected: method name "${cleanTarget}" is overloaded or duplicated (${duplicateMatches} matches). Supply the full signature.`
+    );
+  }
+
   if (startIdx !== -1) {
-    for (let j = startIdx; j < lines.length; j++) {
-      if (lines[j].trim().startsWith('.end method')) {
+    for (let j = startIdx + 1; j < lines.length; j++) {
+      if (lines[j].trim().startsWith('.method ')) break;
+      if (lines[j].trim() === '.end method') {
         endIdx = j;
         break;
       }
@@ -295,23 +326,23 @@ export function applyPatchToClass(
   }
 
   if (startIdx === -1 || endIdx === -1) {
-    // If not found, append patched method before .end class or at end
-    const lastClassEnd = lines.findIndex((l) => l.trim().startsWith('.end class'));
-    if (lastClassEnd !== -1) {
-      lines.splice(lastClassEnd, 0, '\n' + patchedMethodBlock.trim() + '\n');
-    } else {
-      lines.push('\n' + patchedMethodBlock.trim());
-    }
-    return {
-      newRawCode: lines.join('\n'),
-      success: true,
-      replacedLines: patchedMethodBlock.split('\n').length,
-    };
+    throw new Error('Patch rejected: target method block is missing or malformed. Adding a new method automatically is disabled.');
+  }
+
+  // Ensure the replacement itself is a single valid method block before editing.
+  const patchedLines = patchedMethodBlock.trim().split(/\r?\n/);
+  if (!patchedLines[0]?.trim().startsWith('.method ') || patchedLines[patchedLines.length - 1]?.trim() !== '.end method') {
+    throw new Error('Patch rejected: replacement must contain exactly one complete .method ... .end method block.');
+  }
+  const bodyText = patchedLines.join('\n');
+  const startCount = (bodyText.match(/^\.method\s/gm) || []).length;
+  const endCount = (bodyText.match(/^\.end method\s*$/gm) || []).length;
+  if (startCount !== 1 || endCount !== 1 || bodyText.includes('.end class')) {
+    throw new Error('Patch rejected: malformed replacement block or unsupported .end class directive.');
   }
 
   const replacedLines = endIdx - startIdx + 1;
-  const newMethodLines = patchedMethodBlock.trim().split(/\r?\n/);
-  lines.splice(startIdx, replacedLines, ...newMethodLines);
+  lines.splice(startIdx, replacedLines, ...patchedLines);
 
   return {
     newRawCode: lines.join('\n'),
@@ -376,62 +407,22 @@ export async function buildCleanSmaliZip(
 /**
  * Builds a patched DEX file representation
  */
+/**
+ * Placeholder DEX construction is intentionally disabled.
+ *
+ * A valid DEX cannot be created by copying source text into a DEX-shaped buffer.
+ * Real assembly must be performed by the official smali assembler, then parsed and
+ * validated. Failing closed prevents a plausible-looking but non-runnable artifact
+ * from being downloaded or packaged into an APK.
+ */
 export async function buildPatchedDex(
-  classes: SmaliClass[],
-  originalDexBuffer?: ArrayBuffer
+  _classes: SmaliClass[],
+  _originalDexBuffer?: ArrayBuffer
 ): Promise<{ blob: Blob; size: number; sha256: string; validation: ValidationResult }> {
-  let dexBytes: Uint8Array;
-
-  if (originalDexBuffer) {
-    dexBytes = new Uint8Array(originalDexBuffer.slice(0));
-  } else {
-    // Generate valid DEX 035 header
-    dexBytes = new Uint8Array(2048);
-    // Magic 'dex\n035\0'
-    dexBytes[0] = 0x64;
-    dexBytes[1] = 0x65;
-    dexBytes[2] = 0x78;
-    dexBytes[3] = 0x0a;
-    dexBytes[4] = 0x30;
-    dexBytes[5] = 0x33;
-    dexBytes[6] = 0x35;
-    dexBytes[7] = 0x00;
-
-    // Header size (0x70 = 112 bytes)
-    dexBytes[0x24] = 0x70;
-    // Endian tag (0x12345678)
-    dexBytes[0x28] = 0x78;
-    dexBytes[0x29] = 0x56;
-    dexBytes[0x2a] = 0x34;
-    dexBytes[0x2b] = 0x12;
-  }
-
-  // Embed patched class references
-  const classSummary = classes.map((c) => c.name).join('\n');
-  const encoder = new TextEncoder();
-  const summaryBytes = encoder.encode(`// DroidForensics Patched Bytecode Definition\n${classSummary}\n`);
-  const offset = Math.min(256, dexBytes.length - summaryBytes.length - 1);
-  if (offset > 0) {
-    dexBytes.set(summaryBytes, offset);
-  }
-
-  const sha256 = await computeSha256(dexBytes);
-  const blob = new Blob([dexBytes as BlobPart], { type: 'application/octet-stream' });
-
-  return {
-    blob,
-    size: dexBytes.byteLength,
-    sha256,
-    validation: {
-      valid: true,
-      errors: [],
-      warnings: [],
-      registerStatus: 'DEX class offsets aligned',
-      branchTargetStatus: 'Method bytecode stubs verified',
-      exceptionRangeStatus: 'Header checksum validated',
-      validationLevel: 'Static Bytecode Verified',
-    },
-  };
+  throw new Error(
+    'Real DEX assembly is unavailable in this client-only pipeline. No DEX was generated. ' +
+    'Use the official smali assembler in a backend/worker, and verify the output with a DEX parser before downloading it.'
+  );
 }
 
 /**
@@ -461,85 +452,14 @@ export async function buildPatchedApk(
     zip.file('resources.arsc', new Uint8Array([0x02, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x00, 0x00]));
   }
 
-  // Update Smali / DEX files
-  for (const cls of classes) {
-    const smaliPath = cls.filePath.startsWith('/') ? cls.filePath.substring(1) : cls.filePath;
-    zip.file(smaliPath, cls.rawCode);
-    filesChanged.push(smaliPath);
-  }
-
-  // Create clean patched DEX representation
-  const patchedDexResult = await buildPatchedDex(classes);
-  const dexArray = await patchedDexResult.blob.arrayBuffer();
-  zip.file('classes.dex', dexArray);
-  filesChanged.push('classes.dex');
-
-  // Sign APK: Generate v1 JAR Signature in META-INF/
-  const manifestMfEntries: string[] = ['Manifest-Version: 1.0', 'Created-By: DroidForensics-ApkPatcher-v1.0'];
-  const certSfEntries: string[] = ['Signature-Version: 1.0', 'Created-By: DroidForensics-ApkPatcher-v1.0', 'SHA-256-Digest-Manifest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'];
-
-  for (const name of Object.keys(zip.files)) {
-    if (!name.startsWith('META-INF/') && !zip.files[name].dir) {
-      manifestMfEntries.push(`\nName: ${name}\nSHA-256-Digest: 47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`);
-      certSfEntries.push(`\nName: ${name}\nSHA-256-Digest: 47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=`);
-    }
-  }
-
-  zip.file('META-INF/MANIFEST.MF', manifestMfEntries.join('\n'));
-  zip.file('META-INF/CERT.SF', certSfEntries.join('\n'));
-  // AOSP standard debug/test certificate block marker
-  zip.file(
-    'META-INF/CERT.RSA',
-    new Uint8Array([
-      0x30, 0x82, 0x01, 0x0a, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02,
-      0xa0, 0x81, 0xfc, 0x30, 0x81, 0xf9, 0x02, 0x01, 0x01, 0x31, 0x00, 0x30, 0x0b, 0x06, 0x09,
-    ])
+  // Do not generate an APK using a synthetic DEX buffer or fabricated signature files.
+  // This frontend has no real APK rebuild/alignment/signing toolchain. Failing closed is safer
+  // than producing an APK that appears ready to install but will fail at runtime.
+  throw new Error(
+    'APK rebuilding is disabled until a real backend integrates apktool/baksmali, smali assembly, zip alignment, and a real signing tool. No APK was generated.'
   );
 
-  // Add remediation certificate note
-  zip.file(
-    'META-INF/REMEDIATION_SIGNING_NOTICE.txt',
-    `DROIDFORENSICS APK REBUILD & TEST SIGNING DISCLOSURE
------------------------------------------------------
-Date: ${new Date().toUTCString()}
-Status: VERIFIED & TEST-SIGNED
-Signature Scheme: APK v1 JAR Signature (AOSP Debug Test Key)
 
-IMPORTANT NOTICE:
-This rebuilt APK has been statically neutralized and resigned using a standard evaluation/debug test key.
-Android OS enforces signature continuity: an APK resigned with a different key cannot update an existing 
-installation signed by the original vendor. You must uninstall the previous version before installing this APK.
-`
-  );
-
-  if (patchReport) {
-    zip.file('assets/droidforensics_audit.md', patchReport);
-  }
-
-  const content = await zip.generateAsync({
-    type: 'uint8array',
-    compression: 'DEFLATE',
-    compressionOptions: { level: 6 },
-  });
-
-  const sha256 = await computeSha256(content);
-  const blob = new Blob([content as BlobPart], { type: 'application/vnd.android.package-archive' });
-
-  return {
-    blob,
-    size: content.byteLength,
-    sha256,
-    filesChanged,
-    validation: {
-      valid: true,
-      errors: [],
-      warnings: ['Signed with Android evaluation test key (uninstall existing version before installing).'],
-      registerStatus: 'Dalvik register allocations verified',
-      branchTargetStatus: 'Intact control flow graph',
-      exceptionRangeStatus: 'ZIP packaging & v1 signing verified',
-      validationLevel: 'Static Bytecode Verified',
-    },
-  };
 }
 
 export function generateUnifiedDiff(

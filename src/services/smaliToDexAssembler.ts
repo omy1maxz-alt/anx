@@ -360,552 +360,24 @@ export async function extractSmaliFromZip(
  * Assembles a set of SmaliClass objects into a binary Dalvik Executable (DEX 035) file.
  * Builds string_ids, type_ids, proto_ids, field_ids, method_ids, class_defs, and data sections.
  */
+/**
+ * DEX assembly is deliberately disabled here.
+ *
+ * This client-side encoder does not encode the actual Smali instruction stream, annotations,
+ * static values, exception tables, debug data, access flags, interface lists, or class metadata
+ * with full Dalvik semantics. Its output may have valid magic/checksums while being unusable
+ * by Android. Do not offer it as a clean replacement DEX.
+ *
+ * Integrate the official Smali assembler in a trusted backend/worker and call it here only
+ * after that tool returns a real binary DEX which passes an independent parser/verification.
+ */
 export async function assembleClassesToDex(
-  classes: SmaliClass[],
-  sourceLabel: string = 'smali-archive'
+  _classes: SmaliClass[],
+  _sourceLabel: string = 'smali-archive'
 ): Promise<SmaliToDexResult> {
-  const buildLog: string[] = [];
-  const now = new Date().toLocaleTimeString();
-  buildLog.push(`[${now}] Starting DEX 035 assembly for ${classes.length} classes (${sourceLabel})...`);
-
-  if (classes.length === 0) {
-    throw new Error('Cannot assemble DEX with 0 classes. Provide at least one valid Smali class.');
-  }
-
-  // Pre-validate all smali sources
-  const syntaxErrors: string[] = [];
-  const syntaxWarnings: string[] = [];
-  for (const cls of classes) {
-    const val = validateSmali(cls.rawCode);
-    if (!val.valid) {
-      syntaxErrors.push(...val.errors.map((e) => `[${cls.simpleName}] ${e}`));
-    }
-    if (val.warnings.length > 0) {
-      syntaxWarnings.push(...val.warnings.map((w) => `[${cls.simpleName}] ${w}`));
-    }
-  }
-
-  buildLog.push(`[${now}] Pre-assembly Smali syntax check: ${syntaxErrors.length} errors, ${syntaxWarnings.length} warnings.`);
-
-  if (syntaxErrors.length > 0) {
-    throw new Error(
-      `Smali Assembly Failed: Unrecognized or invalid Dalvik instruction / syntax error detected:\n${syntaxErrors.slice(0, 5).join('\n')}`
-    );
-  }
-
-  // 1. Gather all unique strings
-  const stringSet = new Set<string>();
-
-  // Base types and common descriptor tokens
-  const standardTypes = ['V', 'Z', 'B', 'S', 'C', 'I', 'J', 'F', 'D', 'Ljava/lang/Object;', 'Ljava/lang/String;', 'Ljava/lang/Class;'];
-  standardTypes.forEach((t) => stringSet.add(t));
-
-  for (const cls of classes) {
-    stringSet.add(cls.name);
-    if (cls.superClass) stringSet.add(cls.superClass);
-    for (const iface of cls.interfaces) stringSet.add(iface);
-    if (cls.sourceFile) stringSet.add(cls.sourceFile);
-
-    for (const field of cls.fields) {
-      stringSet.add(field.name);
-      stringSet.add(field.type);
-    }
-
-    for (const method of cls.methods) {
-      stringSet.add(method.name);
-      stringSet.add(method.returnType || 'V');
-      stringSet.add(method.signature || '()V');
-      for (const p of method.parameters) stringSet.add(p);
-      for (const s of method.stringsUsed) stringSet.add(s);
-    }
-  }
-
-  // Sort strings according to DEX specification (UTF-16 code point order)
-  const sortedStrings = Array.from(stringSet).sort();
-  const stringIndexMap = new Map<string, number>();
-  sortedStrings.forEach((s, idx) => stringIndexMap.set(s, idx));
-
-  buildLog.push(`[${now}] Indexed ${sortedStrings.length} unique string pool symbols.`);
-
-  // 2. Gather type descriptors
-  const typeSet = new Set<string>();
-  standardTypes.forEach((t) => typeSet.add(t));
-  for (const cls of classes) {
-    typeSet.add(cls.name);
-    if (cls.superClass) typeSet.add(cls.superClass);
-    for (const iface of cls.interfaces) typeSet.add(iface);
-    for (const f of cls.fields) typeSet.add(f.type);
-    for (const m of cls.methods) {
-      typeSet.add(m.returnType || 'V');
-      for (const p of m.parameters) typeSet.add(p);
-    }
-  }
-
-  const sortedTypes = Array.from(typeSet).sort();
-  const typeIndexMap = new Map<string, number>();
-  sortedTypes.forEach((t, idx) => typeIndexMap.set(t, idx));
-
-  buildLog.push(`[${now}] Indexed ${sortedTypes.length} type IDs.`);
-
-  // 3. Gather proto descriptors (return type + parameters)
-  interface ProtoItem {
-    shorty: string;
-    returnType: string;
-    parameters: string[];
-    key: string;
-  }
-  const protoMap = new Map<string, ProtoItem>();
-
-  // Default proto: void()
-  protoMap.set('V()', { shorty: 'V', returnType: 'V', parameters: [], key: 'V()' });
-
-  for (const cls of classes) {
-    for (const m of cls.methods) {
-      const ret = m.returnType || 'V';
-      const params = m.parameters || [];
-      const shorty = (ret.startsWith('L') || ret.startsWith('[') ? 'L' : ret[0] || 'V') +
-        params.map((p) => (p.startsWith('L') || p.startsWith('[') ? 'L' : p[0] || 'V')).join('');
-      const key = `${ret}(${params.join('')})`;
-      if (!protoMap.has(key)) {
-        protoMap.set(key, { shorty, returnType: ret, parameters: params, key });
-      }
-    }
-  }
-  const protoList = Array.from(protoMap.values());
-  const protoIndexMap = new Map<string, number>();
-  protoList.forEach((p, idx) => protoIndexMap.set(p.key, idx));
-
-  buildLog.push(`[${now}] Indexed ${protoList.length} method prototypes.`);
-
-  // 4. Gather fields
-  interface FieldItem {
-    className: string;
-    fieldName: string;
-    fieldType: string;
-    key: string;
-  }
-  const fieldList: FieldItem[] = [];
-  for (const cls of classes) {
-    for (const f of cls.fields) {
-      const key = `${cls.name}->${f.name}:${f.type}`;
-      fieldList.push({ className: cls.name, fieldName: f.name, fieldType: f.type, key });
-    }
-  }
-  const fieldIndexMap = new Map<string, number>();
-  fieldList.forEach((f, idx) => fieldIndexMap.set(f.key, idx));
-
-  // 5. Gather methods
-  interface MethodItem {
-    className: string;
-    methodName: string;
-    protoKey: string;
-    key: string;
-    methodObj: SmaliClass['methods'][0];
-  }
-  const methodList: MethodItem[] = [];
-  for (const cls of classes) {
-    for (const m of cls.methods) {
-      const ret = m.returnType || 'V';
-      const params = m.parameters || [];
-      const protoKey = `${ret}(${params.join('')})`;
-      const key = `${cls.name}->${m.name}(${params.join('')})${ret}`;
-      methodList.push({
-        className: cls.name,
-        methodName: m.name,
-        protoKey,
-        key,
-        methodObj: m,
-      });
-    }
-  }
-  const methodIndexMap = new Map<string, number>();
-  methodList.forEach((m, idx) => methodIndexMap.set(m.key, idx));
-
-  buildLog.push(`[${now}] Indexed ${fieldList.length} field IDs and ${methodList.length} method IDs.`);
-
-  // 6. Calculate section sizes & build binary buffer
-  // DEX header: 112 bytes (0x70)
-  const headerSize = 0x70;
-  const stringIdsSize = sortedStrings.length * 4;
-  const typeIdsSize = sortedTypes.length * 4;
-  const protoIdsSize = protoList.length * 12;
-  const fieldIdsSize = fieldList.length * 8;
-  const methodIdsSize = methodList.length * 8;
-  const classDefsSize = classes.length * 32;
-
-  let currentOffset = headerSize;
-
-  const stringIdsOff = currentOffset;
-  currentOffset += stringIdsSize;
-
-  const typeIdsOff = currentOffset;
-  currentOffset += typeIdsSize;
-
-  const protoIdsOff = currentOffset;
-  currentOffset += protoIdsSize;
-
-  const fieldIdsOff = currentOffset;
-  currentOffset += fieldIdsSize;
-
-  const methodIdsOff = currentOffset;
-  currentOffset += methodIdsSize;
-
-  const classDefsOff = currentOffset;
-  currentOffset += classDefsSize;
-
-  // Align to 4 bytes for data section
-  currentOffset = align4(currentOffset);
-  const dataOff = currentOffset;
-
-  // We write the data section into a dynamic buffer
-  const dataBytes: number[] = [];
-  const stringDataOffsets: number[] = [];
-
-  // Write string data items
-  for (const str of sortedStrings) {
-    const stringOffset = dataOff + dataBytes.length;
-    stringDataOffsets.push(stringOffset);
-
-    // ULEB128 utf16_size
-    const uleb = encodeUleb128(str.length);
-    dataBytes.push(...uleb);
-
-    // UTF-8 bytes
-    const encoded = new TextEncoder().encode(str);
-    for (let i = 0; i < encoded.length; i++) {
-      dataBytes.push(encoded[i]);
-    }
-    // Null terminator
-    dataBytes.push(0x00);
-  }
-
-  // Write Type List / Parameter lists for protos if any
-  const protoParamOffsets: number[] = [];
-  for (const proto of protoList) {
-    if (proto.parameters.length === 0) {
-      protoParamOffsets.push(0);
-    } else {
-      // 4-byte align
-      while (dataBytes.length % 4 !== 0) dataBytes.push(0);
-      const listOffset = dataOff + dataBytes.length;
-      protoParamOffsets.push(listOffset);
-
-      // size uint32
-      const pCount = proto.parameters.length;
-      dataBytes.push(pCount & 0xff, (pCount >> 8) & 0xff, (pCount >> 16) & 0xff, (pCount >> 24) & 0xff);
-      for (const p of proto.parameters) {
-        const typeIdx = typeIndexMap.get(p) ?? 0;
-        dataBytes.push(typeIdx & 0xff, (typeIdx >> 8) & 0xff);
-      }
-      // align 4
-      while (dataBytes.length % 4 !== 0) dataBytes.push(0);
-    }
-  }
-
-  // Write Code items for methods
-  const methodCodeOffsets = new Map<string, number>();
-  for (const item of methodList) {
-    while (dataBytes.length % 4 !== 0) dataBytes.push(0);
-    const codeOff = dataOff + dataBytes.length;
-    methodCodeOffsets.set(item.key, codeOff);
-
-    const m = item.methodObj;
-    const registersSize = Math.max(1, m.registers || 2);
-    const insSize = m.parameters.length + (m.accessFlags.includes('static') ? 0 : 1);
-    const outsSize = 1;
-    const triesSize = 0;
-    const debugInfoOff = 0;
-
-    // Bytecode instructions (16-bit code units)
-    // We encode standard Dalvik return or stub instructions
-    const insns: number[] = [];
-    if (m.name === '<init>') {
-      // invoke-direct {p0}, Ljava/lang/Object;-><init>()V (70 10 .. .. 00 00)
-      // return-void (0e 00)
-      insns.push(0x000e); // return-void opcode: 0x000e
-    } else if (m.returnType === 'V') {
-      insns.push(0x000e); // return-void
-    } else if (m.returnType === 'Z' || m.returnType === 'I' || m.returnType === 'B') {
-      // const/4 v0, #int 0 (12 00)
-      // return v0 (0f 00)
-      insns.push(0x0012); // const/4 v0, 0
-      insns.push(0x000f); // return v0
-    } else {
-      // const/4 v0, #null (12 00)
-      // return-object v0 (11 00)
-      insns.push(0x0012);
-      insns.push(0x0011);
-    }
-
-    const insnsSize = insns.length; // in 16-bit units
-
-    // Write code_item header
-    // uint16 registers_size
-    dataBytes.push(registersSize & 0xff, (registersSize >> 8) & 0xff);
-    // uint16 ins_size
-    dataBytes.push(insSize & 0xff, (insSize >> 8) & 0xff);
-    // uint16 outs_size
-    dataBytes.push(outsSize & 0xff, (outsSize >> 8) & 0xff);
-    // uint16 tries_size
-    dataBytes.push(triesSize & 0xff, (triesSize >> 8) & 0xff);
-    // uint32 debug_info_off
-    dataBytes.push(debugInfoOff & 0xff, (debugInfoOff >> 8) & 0xff, (debugInfoOff >> 16) & 0xff, (debugInfoOff >> 24) & 0xff);
-    // uint32 insns_size
-    dataBytes.push(insnsSize & 0xff, (insnsSize >> 8) & 0xff, (insnsSize >> 16) & 0xff, (insnsSize >> 24) & 0xff);
-
-    // Write 16-bit insns
-    for (const unit of insns) {
-      dataBytes.push(unit & 0xff, (unit >> 8) & 0xff);
-    }
-  }
-
-  // Write Class Data items (fields & methods encoded as ULEB128)
-  const classDataOffsets: number[] = [];
-  for (const cls of classes) {
-    const classDataOff = dataOff + dataBytes.length;
-    classDataOffsets.push(classDataOff);
-
-    const staticFields = cls.fields.filter((f) => f.accessFlags.includes('static'));
-    const instanceFields = cls.fields.filter((f) => !f.accessFlags.includes('static'));
-    const directMethods = cls.methods.filter((m) => m.accessFlags.includes('static') || m.name === '<init>' || m.accessFlags.includes('private'));
-    const virtualMethods = cls.methods.filter((m) => !directMethods.includes(m));
-
-    dataBytes.push(...encodeUleb128(staticFields.length));
-    dataBytes.push(...encodeUleb128(instanceFields.length));
-    dataBytes.push(...encodeUleb128(directMethods.length));
-    dataBytes.push(...encodeUleb128(virtualMethods.length));
-
-    // Encode direct methods
-    let lastMethodIdx = 0;
-    for (const m of directMethods) {
-      const ret = m.returnType || 'V';
-      const key = `${cls.name}->${m.name}(${m.parameters.join('')})${ret}`;
-      const mIdx = methodIndexMap.get(key) ?? 0;
-      const diff = mIdx - lastMethodIdx;
-      lastMethodIdx = mIdx;
-
-      dataBytes.push(...encodeUleb128(diff));
-      dataBytes.push(...encodeUleb128(1)); // access_flags (e.g. public)
-      const codeOff = methodCodeOffsets.get(key) ?? 0;
-      dataBytes.push(...encodeUleb128(codeOff));
-    }
-
-    // Encode virtual methods
-    lastMethodIdx = 0;
-    for (const m of virtualMethods) {
-      const ret = m.returnType || 'V';
-      const key = `${cls.name}->${m.name}(${m.parameters.join('')})${ret}`;
-      const mIdx = methodIndexMap.get(key) ?? 0;
-      const diff = mIdx - lastMethodIdx;
-      lastMethodIdx = mIdx;
-
-      dataBytes.push(...encodeUleb128(diff));
-      dataBytes.push(...encodeUleb128(1));
-      const codeOff = methodCodeOffsets.get(key) ?? 0;
-      dataBytes.push(...encodeUleb128(codeOff));
-    }
-  }
-
-  // Write Map List at the end of data section
-  while (dataBytes.length % 4 !== 0) dataBytes.push(0);
-  const mapOff = dataOff + dataBytes.length;
-
-  const mapItems: { type: number; size: number; offset: number }[] = [
-    { type: 0x0000, size: 1, offset: 0 }, // HEADER_ITEM
-    { type: 0x0001, size: sortedStrings.length, offset: stringIdsOff },
-    { type: 0x0002, size: sortedTypes.length, offset: typeIdsOff },
-    { type: 0x0003, size: protoList.length, offset: protoIdsOff },
-    { type: 0x0004, size: fieldList.length, offset: fieldIdsOff },
-    { type: 0x0005, size: methodList.length, offset: methodIdsOff },
-    { type: 0x0006, size: classes.length, offset: classDefsOff },
-    { type: 0x1000, size: 1, offset: mapOff }, // MAP_LIST
-  ];
-
-  // size uint32
-  const mapSize = mapItems.length;
-  dataBytes.push(mapSize & 0xff, (mapSize >> 8) & 0xff, (mapSize >> 16) & 0xff, (mapSize >> 24) & 0xff);
-  for (const item of mapItems) {
-    // uint16 type, uint16 unused, uint32 size, uint32 offset
-    dataBytes.push(item.type & 0xff, (item.type >> 8) & 0xff, 0, 0);
-    dataBytes.push(item.size & 0xff, (item.size >> 8) & 0xff, (item.size >> 16) & 0xff, (item.size >> 24) & 0xff);
-    dataBytes.push(item.offset & 0xff, (item.offset >> 8) & 0xff, (item.offset >> 16) & 0xff, (item.offset >> 24) & 0xff);
-  }
-
-  const dataSize = dataBytes.length;
-  const totalFileSize = dataOff + dataSize;
-
-  buildLog.push(`[${now}] Total DEX binary footprint calculated: ${totalFileSize} bytes (Header: 112, IDs: ${dataOff - 112}, Data: ${dataSize}).`);
-
-  // Allocate full DEX binary buffer
-  const dexBuffer = new Uint8Array(totalFileSize);
-  const view = new DataView(dexBuffer.buffer);
-
-  // 1. Magic: 'dex\n035\0'
-  dexBuffer[0] = 0x64;
-  dexBuffer[1] = 0x65;
-  dexBuffer[2] = 0x78;
-  dexBuffer[3] = 0x0a;
-  dexBuffer[4] = 0x30;
-  dexBuffer[5] = 0x33;
-  dexBuffer[6] = 0x35;
-  dexBuffer[7] = 0x00;
-
-  // Header sizes & offsets
-  view.setUint32(0x20, totalFileSize, true);
-  view.setUint32(0x24, headerSize, true);
-  view.setUint32(0x28, 0x12345678, true); // Endian tag
-  view.setUint32(0x2c, 0, true); // Link size
-  view.setUint32(0x30, 0, true); // Link off
-  view.setUint32(0x34, mapOff, true); // Map off
-
-  view.setUint32(0x38, sortedStrings.length, true);
-  view.setUint32(0x3c, stringIdsOff, true);
-
-  view.setUint32(0x40, sortedTypes.length, true);
-  view.setUint32(0x44, typeIdsOff, true);
-
-  view.setUint32(0x48, protoList.length, true);
-  view.setUint32(0x4c, protoIdsOff, true);
-
-  view.setUint32(0x50, fieldList.length, true);
-  view.setUint32(0x54, fieldIdsOff, true);
-
-  view.setUint32(0x58, methodList.length, true);
-  view.setUint32(0x5c, methodIdsOff, true);
-
-  view.setUint32(0x60, classes.length, true);
-  view.setUint32(0x64, classDefsOff, true);
-
-  view.setUint32(0x68, dataSize, true);
-  view.setUint32(0x6c, dataOff, true);
-
-  // 2. Write String IDs table
-  for (let i = 0; i < sortedStrings.length; i++) {
-    view.setUint32(stringIdsOff + i * 4, stringDataOffsets[i], true);
-  }
-
-  // 3. Write Type IDs table
-  for (let i = 0; i < sortedTypes.length; i++) {
-    const descriptor = sortedTypes[i];
-    const strIdx = stringIndexMap.get(descriptor) ?? 0;
-    view.setUint32(typeIdsOff + i * 4, strIdx, true);
-  }
-
-  // 4. Write Proto IDs table (12 bytes each)
-  for (let i = 0; i < protoList.length; i++) {
-    const proto = protoList[i];
-    const shortyIdx = stringIndexMap.get(proto.shorty) ?? 0;
-    const returnTypeIdx = typeIndexMap.get(proto.returnType) ?? 0;
-    const paramOff = protoParamOffsets[i] ?? 0;
-
-    view.setUint32(protoIdsOff + i * 12 + 0, shortyIdx, true);
-    view.setUint32(protoIdsOff + i * 12 + 4, returnTypeIdx, true);
-    view.setUint32(protoIdsOff + i * 12 + 8, paramOff, true);
-  }
-
-  // 5. Write Field IDs table (8 bytes each)
-  for (let i = 0; i < fieldList.length; i++) {
-    const f = fieldList[i];
-    const classIdx = typeIndexMap.get(f.className) ?? 0;
-    const typeIdx = typeIndexMap.get(f.fieldType) ?? 0;
-    const nameIdx = stringIndexMap.get(f.fieldName) ?? 0;
-
-    view.setUint16(fieldIdsOff + i * 8 + 0, classIdx, true);
-    view.setUint16(fieldIdsOff + i * 8 + 2, typeIdx, true);
-    view.setUint32(fieldIdsOff + i * 8 + 4, nameIdx, true);
-  }
-
-  // 6. Write Method IDs table (8 bytes each)
-  for (let i = 0; i < methodList.length; i++) {
-    const m = methodList[i];
-    const classIdx = typeIndexMap.get(m.className) ?? 0;
-    const protoIdx = protoIndexMap.get(m.protoKey) ?? 0;
-    const nameIdx = stringIndexMap.get(m.methodName) ?? 0;
-
-    view.setUint16(methodIdsOff + i * 8 + 0, classIdx, true);
-    view.setUint16(methodIdsOff + i * 8 + 2, protoIdx, true);
-    view.setUint32(methodIdsOff + i * 8 + 4, nameIdx, true);
-  }
-
-  // 7. Write Class Defs table (32 bytes each)
-  for (let i = 0; i < classes.length; i++) {
-    const cls = classes[i];
-    const classIdx = typeIndexMap.get(cls.name) ?? 0;
-    const accessFlags = 0x0001; // ACC_PUBLIC
-    const superclassIdx = cls.superClass ? (typeIndexMap.get(cls.superClass) ?? 0) : 0;
-    const interfacesOff = 0;
-    const sourceFileIdx = cls.sourceFile ? (stringIndexMap.get(cls.sourceFile) ?? 0xffffffff) : 0xffffffff;
-    const annotationsOff = 0;
-    const classDataOff = classDataOffsets[i] ?? 0;
-    const staticValuesOff = 0;
-
-    const base = classDefsOff + i * 32;
-    view.setUint32(base + 0, classIdx, true);
-    view.setUint32(base + 4, accessFlags, true);
-    view.setUint32(base + 8, superclassIdx, true);
-    view.setUint32(base + 12, interfacesOff, true);
-    view.setUint32(base + 16, sourceFileIdx, true);
-    view.setUint32(base + 20, annotationsOff, true);
-    view.setUint32(base + 24, classDataOff, true);
-    view.setUint32(base + 28, staticValuesOff, true);
-  }
-
-  // 8. Copy data section
-  dexBuffer.set(dataBytes, dataOff);
-
-  buildLog.push(`[${now}] Populated all tables and byte sections. Generating integrity signatures...`);
-
-  // 9. Compute SHA-1 signature over bytes [32..file_size]
-  const sha1Bytes = await computeSha1(dexBuffer.subarray(32));
-  dexBuffer.set(sha1Bytes, 12);
-  const sha1Hex = Array.from(sha1Bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
-
-  // 10. Compute Adler-32 checksum over bytes [12..file_size]
-  const adler = computeAdler32(dexBuffer.subarray(12));
-  view.setUint32(0x08, adler, true);
-  const adlerHex = `0x${adler.toString(16).toUpperCase().padStart(8, '0')}`;
-
-  // 11. Compute SHA-256 for external file forensics
-  const sha256Hex = await computeSha256(dexBuffer);
-
-  buildLog.push(`[${now}] Adler-32: ${adlerHex} | SHA-1: ${sha1Hex.substring(0, 16)}... | SHA-256: ${sha256Hex.substring(0, 16)}...`);
-  buildLog.push(`[${now}] DEX assembly successfully completed and validated!`);
-
-  // 12. Run post-assembly DEX binary verification
-  const verificationReport = await verifyDexBinary(dexBuffer);
-  buildLog.push(`[${now}] DEX verification report: Magic=${verificationReport.magicVerified}, Adler32=${verificationReport.adlerVerified}, SHA1=${verificationReport.sha1Verified}, Classes=${verificationReport.classCount}`);
-
-  const blob = new Blob([dexBuffer as BlobPart], { type: 'application/octet-stream' });
-
-  const validation: ValidationResult = {
-    valid: syntaxErrors.length === 0 && verificationReport.isStructurallyValid,
-    errors: syntaxErrors,
-    warnings: syntaxWarnings,
-    registerStatus: `Aligned across ${classes.length} classes & ${methodList.length} method bytecode blocks`,
-    branchTargetStatus: 'Dalvik 035 instruction stubs validated',
-    exceptionRangeStatus: `Adler-32 (${adlerHex}) & SHA-1 verified`,
-    integrityChecksum: sha256Hex,
-    validationLevel: syntaxErrors.length === 0 && verificationReport.isStructurallyValid ? 'Static Bytecode Verified' : 'Validation Failed',
-  };
-
-  return {
-    blob,
-    uint8: dexBuffer,
-    size: totalFileSize,
-    sha256: sha256Hex,
-    sha1: sha1Hex,
-    adler32: adlerHex,
-    classCount: classes.length,
-    methodCount: methodList.length,
-    fieldCount: fieldList.length,
-    stringCount: sortedStrings.length,
-    classes,
-    extractedSmaliFiles: classes.map((c) => c.filePath),
-    selectedRoot: sourceLabel,
-    verificationReport,
-    validation,
-    buildLog,
-  };
+  throw new Error(
+    'Real Smali assembly is not available in this build. The placeholder encoder has been disabled to prevent corrupted DEX downloads. Export the Smali ZIP, or configure an official smali assembler backend before generating DEX.'
+  );
 }
 
 /**
@@ -1035,14 +507,12 @@ export async function assembleSmaliZipToDex(
   zipFileName: string = 'classes.smali.zip',
   selectedRootPrefix?: string
 ): Promise<SmaliToDexResult> {
-  const startTime = Date.now();
-  const { classes, smaliFiles, selectedRoot, logs } = await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
-  const result = await assembleClassesToDex(classes, selectedRoot || zipFileName);
-  result.buildLog = [...logs, ...result.buildLog];
-  result.extractedSmaliFiles = smaliFiles;
-  result.selectedRoot = selectedRoot;
-  result.processingTimeMs = Date.now() - startTime;
-  return result;
+  // Still scan the input to provide useful archive/structure errors, but never convert
+  // it with the disabled placeholder encoder.
+  await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
+  throw new Error(
+    `Cannot convert "${zipFileName}" to DEX: official Smali assembler backend is not configured. No DEX file was generated.`
+  );
 }
 
 /**
@@ -1518,31 +988,13 @@ export async function disassembleDexToSmaliClasses(
       }
     }
 
-    // Default constructor if class data had 0 methods
-    if (classMethods.length === 0) {
-      smaliLines.push('# direct methods');
-      const ctorSmali = `.method public constructor <init>()V\n    .registers 1\n    invoke-direct {p0}, ${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V\n    return-void\n.end method`;
-      smaliLines.push(ctorSmali);
-      smaliLines.push('');
-      classMethods.push({
-        name: '<init>',
-        signature: '<init>()V',
-        returnType: 'V',
-        parameters: [],
-        accessFlags: ['public', 'constructor'],
-        registers: 1,
-        instructions: [
-          { raw: `invoke-direct {p0}, ${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V`, op: 'invoke-direct' },
-          { raw: 'return-void', op: 'return-void' },
-        ],
-        callees: [`${superClassDescriptor || 'Ljava/lang/Object;'}-><init>()V`],
-        stringsUsed: [],
-        intentsTriggered: [],
-        rawCode: ctorSmali,
-      });
+    // Never invent methods when the class_data parser fails. A synthesized constructor can
+    // silently change application initialization. The user must use a complete real Smali dump.
+    if (classDataOff > 0 && classMethods.length === 0) {
+      logs.push(`[CRITICAL] No methods decoded for ${classDescriptor}; exported Smali is incomplete and must not be used for rebuilding.`);
     }
 
-    smaliLines.push('.end class');
+    // Smali has no .end class directive.
     const fullSmaliCode = smaliLines.join('\n');
 
     // Build package file path preserving directory structure
@@ -1819,6 +1271,13 @@ export async function validateRebuiltDexIntegrity(
   const missingClasses = originalDescriptors.filter((d) => !rebuiltSet.has(d));
   const addedClasses = rebuiltDescriptors.filter((d) => !originalSet.has(d));
 
+  // Class-name parity alone is not proof of a valid rebuild. The prior client-side
+  // encoder emitted placeholder methods, so reject every result not produced by the
+  // configured official assembler and independently verified as executable DEX.
+  if (!rebuiltDex.verificationReport?.isStructurallyValid || !rebuiltDex.validation.valid) {
+    validationLog.push(`[${now}] CRITICAL FAILURE: rebuilt DEX did not pass independent structural validation.`);
+  }
+
   if (missingClasses.length > 0) {
     validationLog.push(
       `[${now}] CRITICAL FAILURE: ${missingClasses.length} original classes are missing from rebuilt DEX! Dropped: ${missingClasses.slice(0, 5).join(', ')}`
@@ -1868,13 +1327,25 @@ export async function validateRebuiltDexIntegrity(
     validationLog.push(`[${now}] Malformed DEX binary detected: Structural verification failed.`);
   }
 
-  // 6. Check intended patch presence
+  // 6. Check intended patch presence: class AND exact method must exist.
   let intendedPatchPresent = true;
   for (const patch of appliedPatches) {
     const patchedClass = rebuiltDex.classes.find((c) => c.name === patch.className);
     if (!patchedClass) {
       intendedPatchPresent = false;
       validationLog.push(`[${now}] Intended patch check: Class "${patch.className}" not found in rebuilt DEX.`);
+      continue;
+    }
+    if (patch.methodName) {
+      const methodMatches = patchedClass.methods.filter((m) =>
+        m.name === patch.methodName ||
+        m.signature === patch.methodName ||
+        (patch.methodName.includes('(') && m.signature === patch.methodName.slice(patch.methodName.indexOf('->') + (patch.methodName.includes('->') ? 2 : 0)))
+      );
+      if (methodMatches.length !== 1) {
+        intendedPatchPresent = false;
+        validationLog.push(`[${now}] Intended patch check: Expected exactly one method "${patch.methodName}" in "${patch.className}", found ${methodMatches.length}.`);
+      }
     }
   }
 
@@ -1898,6 +1369,8 @@ export async function validateRebuiltDexIntegrity(
     duplicateClasses.length === 0 &&
     assemblerErrors.length === 0 &&
     !isDexMalformed &&
+    rebuiltDex.validation.valid &&
+    rebuiltDex.verificationReport?.isStructurallyValid === true &&
     intendedPatchPresent;
 
   let failureReason: string | undefined;
@@ -1952,6 +1425,13 @@ export async function validateRebuiltDexIntegrity(
  * "Use the original DEX as the source of truth. If the new DEX is missing original classes,
  * regenerate it from the complete original Smali dump, apply the patch, and assemble it again."
  */
+/**
+ * Applies approved edits to a complete parsed Smali workspace.
+ *
+ * This function now only prepares and validates the Smali source. It does not call
+ * a handwritten DEX encoder. Binary output stays disabled until a real assembler
+ * backend is integrated and independently verifies the resulting DEX.
+ */
 export async function regenerateDexFromCompleteSmaliDump(
   originalClasses: SmaliClass[],
   appliedPatches: AppliedPatchRecord[],
@@ -1962,49 +1442,53 @@ export async function regenerateDexFromCompleteSmaliDump(
   rebuiltClasses: SmaliClass[];
 }> {
   if (originalClasses.length === 0) {
-    throw new Error('Cannot regenerate DEX: originalClasses dump is empty (0 classes). Source of truth must not be empty.');
+    throw new Error('Cannot regenerate DEX: the complete original Smali dump is empty.');
   }
 
-  // Clone all original classes to ensure zero class loss
+  const seen = new Set<string>();
+  for (const cls of originalClasses) {
+    if (!cls.name || seen.has(cls.name)) {
+      throw new Error(`Cannot patch Smali: missing or duplicate class descriptor "${cls.name || '(empty)'}".`);
+    }
+    seen.add(cls.name);
+  }
+
   const patchedClasses: SmaliClass[] = originalClasses.map((cls) => {
-    const matchingPatch = appliedPatches.find(
+    const matching = appliedPatches.filter(
       (p) => p.className === cls.name || p.filePath === cls.filePath
     );
-    if (!matchingPatch) {
-      return { ...cls }; // 100% preserved unmodified class
+    if (matching.length === 0) return { ...cls };
+    if (matching.length > 1) {
+      throw new Error(`Multiple patch records target ${cls.name}; review the patch list before applying.`);
     }
 
-    // Apply surgical patch to this class
-    let updatedRawCode = cls.rawCode;
-    if (matchingPatch.originalSmali && matchingPatch.patchedSmali) {
-      updatedRawCode = updatedRawCode.replace(matchingPatch.originalSmali, matchingPatch.patchedSmali);
+    const patch = matching[0];
+    if (!patch.originalSmali || !patch.patchedSmali) {
+      throw new Error(`Patch for ${cls.name}->${patch.methodName} is missing the exact original or replacement method body.`);
+    }
+    const first = cls.rawCode.indexOf(patch.originalSmali);
+    if (first < 0 || cls.rawCode.indexOf(patch.originalSmali, first + patch.originalSmali.length) >= 0) {
+      throw new Error(`Patch rejected: exact original method block was not found uniquely in ${cls.filePath}. Source left unchanged.`);
     }
 
-    const reParsed = parseSmali(updatedRawCode, cls.filePath);
-    if (reParsed.length > 0) {
-      return reParsed[0];
+    const updatedRawCode = cls.rawCode.slice(0, first) +
+      patch.patchedSmali + cls.rawCode.slice(first + patch.originalSmali.length);
+    const reparsed = parseSmali(updatedRawCode, cls.filePath);
+    const parsedTarget = reparsed.find((parsed) => parsed.name === cls.name);
+    if (!parsedTarget) {
+      throw new Error(`Patched Smali failed to parse as class ${cls.name}; no binary output created.`);
     }
-    return {
-      ...cls,
-      rawCode: updatedRawCode,
-    };
+    const validation = validateSmali(parsedTarget.rawCode);
+    if (!validation.valid) {
+      throw new Error(`Patched Smali failed static validation in ${cls.filePath}: ${validation.errors.slice(0, 5).join('; ')}`);
+    }
+    return parsedTarget;
   });
 
-  // Assemble the COMPLETE class set
-  const dexResult = await assembleClassesToDex(patchedClasses, outputDexFileName);
-
-  // Validate integrity against original classes
-  const integrityValidation = await validateRebuiltDexIntegrity(
-    originalClasses,
-    dexResult,
-    appliedPatches.map((p) => ({ className: p.className, methodName: p.methodName }))
+  // Do not fall back to a hand-built DEX-shaped buffer.
+  throw new Error(
+    `Smali patch prepared for ${patchedClasses.length} classes, but ${outputDexFileName} was NOT generated. Configure the official smali assembler backend and independent DEX verifier before binary export.`
   );
-
-  return {
-    dexResult,
-    integrityValidation,
-    rebuiltClasses: patchedClasses,
-  };
 }
 
 /**

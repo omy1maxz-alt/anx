@@ -277,125 +277,16 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
   // Simulate the Partial Assembly bug: assembles ONLY the modified class
   const handleSimulatePartialAssemblyBug = async () => {
     if (!dex10Disassembly) return;
-    setIsSimulatingBug(true);
-    setErrorMessage(null);
-    setAssembleProgressStep('Simulating buggy partial assembly: assembling ONLY modified ForcedUpdateDialog...');
-
-    try {
-      // Intentionally omit App.smali and other classes (the exact cause of the crash!)
-      const targetClass = dex10Disassembly.classes.find((c) =>
-        c.name.includes('ForcedUpdateDialog')
-      ) || dex10Disassembly.classes[0];
-
-      // Assemble a partial DEX containing only 1 class
-      const partialDexResult = await assembleClassesToDex([targetClass], 'partial-buggy-dex');
-
-      // Run mandatory validation against original DEX classes
-      const validation = await validateRebuiltDexIntegrity(
-        dex10Disassembly.classes,
-        partialDexResult,
-        [{ className: targetClass.name, methodName: 'checkUpdate' }],
-        dex10OriginalBuffer || undefined
-      );
-
-      setAssemblyResult(partialDexResult);
-      setDex10IntegrityResult(validation);
-      setDex10ActiveStep(3);
-      setIsSimulatingBug(false);
-    } catch (err: any) {
-      setIsSimulatingBug(false);
-      setErrorMessage(err.message || 'Bug simulation failed.');
-    }
+    setIsSimulatingBug(false);
+    setErrorMessage('The partial-DEX crash demonstration has been disabled because binary output is not produced by the official Smali assembler. No partial DEX was generated.');
   };
 
   // Execute the robust fix: regenerate from complete Smali dump preserving 100% of classes
   const handleRegenerateFromCompleteSmaliDump = async () => {
-    if (!dex10Disassembly) return;
-    setIsRegenerating(true);
-    setErrorMessage(null);
-    setAssembleProgressStep('Preserving 100% of original classes (including com.gold.youtube.om7753.App)...');
-
-    try {
-      // Find patches to apply: either from appliedPatches or auto-detect adware / update modal
-      const patchesToApply: AppliedPatchRecord[] = [...appliedPatches];
-
-      if (patchesToApply.length === 0) {
-        // Auto-detect adware in dex10Disassembly.classes
-        const adwareClass = dex10Disassembly.classes.find((c) =>
-          c.methods.some(
-            (m) =>
-              m.stringsUsed.includes('com.android.chrome') ||
-              m.intentsTriggered.includes('com.android.chrome') ||
-              m.intentsTriggered.includes('startActivity') ||
-              m.rawCode.includes('com.android.chrome') ||
-              /daily|adware|chrome/i.test(c.simpleName)
-          )
-        );
-
-        if (adwareClass) {
-          const adwareMethod =
-            adwareClass.methods.find(
-              (m) =>
-                m.stringsUsed.includes('com.android.chrome') ||
-                m.rawCode.includes('com.android.chrome') ||
-                m.rawCode.includes('startActivity') ||
-                /daily|ad|chrome/i.test(m.name)
-            ) || adwareClass.methods[0];
-
-          patchesToApply.push({
-            id: 'patch-adware-auto',
-            timestamp: new Date().toISOString(),
-            findingId: 'FIND-ADWARE',
-            findingTitle: 'Chrome Auto-Launch Adware Neutralization',
-            className: adwareClass.name,
-            methodName: adwareMethod.name,
-            filePath: adwareClass.filePath,
-            originalSmali: adwareMethod.rawCode,
-            patchedSmali: `.method public static ${adwareMethod.name}(Landroid/content/Context;)V\n    .registers 2\n    # Adware neutralized: unprompted Chrome launch suppressed\n    return-void\n.end method`,
-            diffSummary: 'Suppressed unprompted Chrome adware launch',
-          });
-        } else {
-          // Check for ForcedUpdateDialog
-          const updateClass = dex10Disassembly.classes.find((c) => c.name.includes('ForcedUpdateDialog'));
-          if (updateClass) {
-            patchesToApply.push({
-              id: 'patch-dex10-update',
-              timestamp: new Date().toISOString(),
-              findingId: 'FIND-DEX10',
-              findingTitle: 'Forced Modal Update Remediation',
-              className: updateClass.name,
-              methodName: 'checkUpdate',
-              filePath: updateClass.filePath,
-              originalSmali: updateClass.methods[0]?.rawCode || '',
-              patchedSmali: `.method public static checkUpdate(Landroid/content/Context;)V\n    .registers 2\n    # Neutralized forced update modal; preserved clean return\n    return-void\n.end method`,
-              diffSummary: 'Neutralized blocking modal prompt',
-            });
-          }
-        }
-      }
-
-      setAssembleProgressStep('Applying surgical patch while preserving all companion classes...');
-      await new Promise((r) => setTimeout(r, 60));
-
-      setAssembleProgressStep(`Assembling complete ${dex10Disassembly.classes.length}-class Dalvik 035 bytecode into ${outputFileName || 'classes10.dex'}...`);
-      const { dexResult, integrityValidation } = await regenerateDexFromCompleteSmaliDump(
-        dex10Disassembly.classes,
-        patchesToApply,
-        outputFileName || 'classes10.dex'
-      );
-
-      setAssemblyResult(dexResult);
-      setDex10IntegrityResult(integrityValidation);
-      setDex10ActiveStep(4);
-      setIsRegenerating(false);
-
-      if (onRegisterDexDownload) {
-        onRegisterDexDownload(dexResult, outputFileName || 'classes10.dex');
-      }
-    } catch (err: any) {
-      setIsRegenerating(false);
-      setErrorMessage(err.message || 'Regeneration failed.');
-    }
+    setIsRegenerating(false);
+    setErrorMessage(
+      'Safe DEX regeneration is disabled until an official Smali assembler backend is available. No DEX was generated or registered for download. Your original DEX and Smali ZIP remain unchanged.'
+    );
   };
 
   // ZIP file upload handler
@@ -451,19 +342,21 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
         setAssembleProgressStep('Extracting Smali files and validating directory hierarchy...');
         await new Promise((r) => setTimeout(r, 60));
 
-        setAssembleProgressStep('Parsing Dalvik bytecode, instructions, and register bounds...');
-        await new Promise((r) => setTimeout(r, 60));
-
-        setAssembleProgressStep('Constructing Dalvik 035 symbol tables and string pool...');
-        result = await assembleSmaliZipToDex(zipBuffer, uploadedZipFile.name, selectedRootPrefix);
+        // assembleSmaliZipToDex previously called a handwritten placeholder encoder.
+        // It is disabled until official smali assembly and independent validation exist.
+        throw new Error(
+          'DEX assembly is currently disabled to prevent corrupt output. The ZIP was not converted. Use the Clean Smali ZIP export; DEX download will return after the official assembler backend is integrated.'
+        );
       } else {
         // Workspace mode
         if (currentClasses.length === 0) {
           throw new Error('No Smali classes currently loaded in workspace. Upload an APK or pick a test scenario first.');
         }
 
-        setAssembleProgressStep(`Assembling ${currentClasses.length} workspace classes into DEX...`);
-        result = await assembleClassesToDex(currentClasses, 'workspace-classes');
+        setAssembleProgressStep(`Validating ${currentClasses.length} workspace classes...`);
+        throw new Error(
+          'DEX assembly is disabled until the official Smali assembler backend is configured. No DEX was generated.'
+        );
       }
 
       setAssembleProgressStep('Computing Adler-32 checksum and SHA-1 signature...');
@@ -497,9 +390,8 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
   };
 
   const handleDownloadDex = async () => {
-    if (!assemblyResult) return;
-    const filename = outputFileName || 'classes10.dex';
-    await downloadBlob(assemblyResult.blob, filename);
+    setErrorMessage('No verified DEX is available. This build disables DEX downloads until official Smali assembly and independent verification are integrated.');
+    return;
   };
 
   const handleAddToArtifacts = () => {

@@ -507,14 +507,12 @@ export async function assembleSmaliZipToDex(
   zipFileName: string = 'classes.smali.zip',
   selectedRootPrefix?: string
 ): Promise<SmaliToDexResult> {
-  const startTime = Date.now();
-  const { classes, smaliFiles, selectedRoot, logs } = await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
-  const result = await assembleClassesToDex(classes, selectedRoot || zipFileName);
-  result.buildLog = [...logs, ...result.buildLog];
-  result.extractedSmaliFiles = smaliFiles;
-  result.selectedRoot = selectedRoot;
-  result.processingTimeMs = Date.now() - startTime;
-  return result;
+  // Still scan the input to provide useful archive/structure errors, but never convert
+  // it with the disabled placeholder encoder.
+  await extractSmaliFromZip(zipBuffer, selectedRootPrefix);
+  throw new Error(
+    `Cannot convert "${zipFileName}" to DEX: official Smali assembler backend is not configured. No DEX file was generated.`
+  );
 }
 
 /**

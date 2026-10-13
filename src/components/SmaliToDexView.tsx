@@ -277,35 +277,8 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
   // Simulate the Partial Assembly bug: assembles ONLY the modified class
   const handleSimulatePartialAssemblyBug = async () => {
     if (!dex10Disassembly) return;
-    setIsSimulatingBug(true);
-    setErrorMessage(null);
-    setAssembleProgressStep('Simulating buggy partial assembly: assembling ONLY modified ForcedUpdateDialog...');
-
-    try {
-      // Intentionally omit App.smali and other classes (the exact cause of the crash!)
-      const targetClass = dex10Disassembly.classes.find((c) =>
-        c.name.includes('ForcedUpdateDialog')
-      ) || dex10Disassembly.classes[0];
-
-      // Assemble a partial DEX containing only 1 class
-      const partialDexResult = await assembleClassesToDex([targetClass], 'partial-buggy-dex');
-
-      // Run mandatory validation against original DEX classes
-      const validation = await validateRebuiltDexIntegrity(
-        dex10Disassembly.classes,
-        partialDexResult,
-        [{ className: targetClass.name, methodName: 'checkUpdate' }],
-        dex10OriginalBuffer || undefined
-      );
-
-      setAssemblyResult(partialDexResult);
-      setDex10IntegrityResult(validation);
-      setDex10ActiveStep(3);
-      setIsSimulatingBug(false);
-    } catch (err: any) {
-      setIsSimulatingBug(false);
-      setErrorMessage(err.message || 'Bug simulation failed.');
-    }
+    setIsSimulatingBug(false);
+    setErrorMessage('The partial-DEX crash demonstration has been disabled because binary output is not produced by the official Smali assembler. No partial DEX was generated.');
   };
 
   // Execute the robust fix: regenerate from complete Smali dump preserving 100% of classes

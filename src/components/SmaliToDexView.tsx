@@ -385,8 +385,10 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
           throw new Error('No Smali classes currently loaded in workspace. Upload an APK or pick a test scenario first.');
         }
 
-        setAssembleProgressStep(`Assembling ${currentClasses.length} workspace classes into DEX...`);
-        result = await assembleClassesToDex(currentClasses, 'workspace-classes');
+        setAssembleProgressStep(`Validating ${currentClasses.length} workspace classes...`);
+        throw new Error(
+          'DEX assembly is disabled until the official Smali assembler backend is configured. No DEX was generated.'
+        );
       }
 
       setAssembleProgressStep('Computing Adler-32 checksum and SHA-1 signature...');

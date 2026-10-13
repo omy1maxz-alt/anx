@@ -1329,13 +1329,25 @@ export async function validateRebuiltDexIntegrity(
     validationLog.push(`[${now}] Malformed DEX binary detected: Structural verification failed.`);
   }
 
-  // 6. Check intended patch presence
+  // 6. Check intended patch presence: class AND exact method must exist.
   let intendedPatchPresent = true;
   for (const patch of appliedPatches) {
     const patchedClass = rebuiltDex.classes.find((c) => c.name === patch.className);
     if (!patchedClass) {
       intendedPatchPresent = false;
       validationLog.push(`[${now}] Intended patch check: Class "${patch.className}" not found in rebuilt DEX.`);
+      continue;
+    }
+    if (patch.methodName) {
+      const methodMatches = patchedClass.methods.filter((m) =>
+        m.name === patch.methodName ||
+        m.signature === patch.methodName ||
+        (patch.methodName.includes('(') && m.signature === patch.methodName.slice(patch.methodName.indexOf('->') + (patch.methodName.includes('->') ? 2 : 0)))
+      );
+      if (methodMatches.length !== 1) {
+        intendedPatchPresent = false;
+        validationLog.push(`[${now}] Intended patch check: Expected exactly one method "${patch.methodName}" in "${patch.className}", found ${methodMatches.length}.`);
+      }
     }
   }
 

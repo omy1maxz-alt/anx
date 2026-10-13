@@ -1273,6 +1273,13 @@ export async function validateRebuiltDexIntegrity(
   const missingClasses = originalDescriptors.filter((d) => !rebuiltSet.has(d));
   const addedClasses = rebuiltDescriptors.filter((d) => !originalSet.has(d));
 
+  // Class-name parity alone is not proof of a valid rebuild. The prior client-side
+  // encoder emitted placeholder methods, so reject every result not produced by the
+  // configured official assembler and independently verified as executable DEX.
+  if (!rebuiltDex.verificationReport?.isStructurallyValid || !rebuiltDex.validation.valid) {
+    validationLog.push(`[${now}] CRITICAL FAILURE: rebuilt DEX did not pass independent structural validation.`);
+  }
+
   if (missingClasses.length > 0) {
     validationLog.push(
       `[${now}] CRITICAL FAILURE: ${missingClasses.length} original classes are missing from rebuilt DEX! Dropped: ${missingClasses.slice(0, 5).join(', ')}`

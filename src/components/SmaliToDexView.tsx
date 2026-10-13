@@ -287,7 +287,7 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
           const targetInner = innerDex.find((d) => d.includes('10')) || innerDex[0];
           setAssembleProgressStep(`Disassembling inner ${targetInner}...`);
           const innerBuf = await zip.files[targetInner].async('arraybuffer');
-          const dis = await disassembleDexToSmaliClasses(innerBuf, targetInner);
+          const dis = await disassembleDexWithBackend(innerBuf, targetInner);
           setDex10Disassembly(dis);
           setDex10IntegrityResult(null);
           setAssemblyResult(null);
@@ -302,7 +302,7 @@ export const SmaliToDexView: React.FC<SmaliToDexViewProps> = ({
       }
 
       setAssembleProgressStep(`Running Baksmali disassembler on ${file.name}...`);
-      const dis = await disassembleDexToSmaliClasses(buffer, file.name);
+      const dis = await disassembleDexWithBackend(buffer, file.name);
       setDex10Disassembly(dis);
       setDex10IntegrityResult(null);
       setAssemblyResult(null);
